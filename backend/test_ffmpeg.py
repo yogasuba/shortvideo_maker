@@ -6,8 +6,11 @@ def test_ffmpeg():
     print("Testing FFmpeg installation...")
     
     try:
+        from main import Config
+        ffmpeg_cmd = Config.get_ffmpeg()
+        print(f"Using FFmpeg path: {ffmpeg_cmd}")
         # Check if ffmpeg is installed
-        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+        result = subprocess.run([ffmpeg_cmd, "-version"], capture_output=True, text=True)
         if result.returncode == 0:
             print("✓ FFmpeg is installed")
         else:
@@ -16,7 +19,7 @@ def test_ffmpeg():
         # Test simple video creation
         print("\nTesting video creation...")
         test_cmd = [
-            "ffmpeg",
+            ffmpeg_cmd,
             "-f", "lavfi",
             "-i", "color=c=red:s=640x480:d=2",
             "-c:v", "libx264",

@@ -9,6 +9,7 @@ from typing import List, Optional, Dict, Any
 import logging
 import math
 from PIL import ImageEnhance
+import shutil
 
 # FastAPI
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
@@ -49,6 +50,18 @@ class Config:
     # Create storage directories
     for subdir in ["audio", "visuals", "videos", "temp", "scenes"]:
         (STORAGE_DIR / subdir).mkdir(parents=True, exist_ok=True)
+    
+    # FFmpeg paths
+    FFMPEG_PATH = os.path.normpath("C:/ffmpeg/bin/ffmpeg.exe")
+    FFPROBE_PATH = os.path.normpath("C:/ffmpeg/bin/ffprobe.exe")
+    
+    @classmethod
+    def get_ffmpeg(cls):
+        return cls.FFMPEG_PATH if os.path.exists(cls.FFMPEG_PATH) else (shutil.which("ffmpeg") or "ffmpeg")
+        
+    @classmethod
+    def get_ffprobe(cls):
+        return cls.FFPROBE_PATH if os.path.exists(cls.FFPROBE_PATH) else (shutil.which("ffprobe") or "ffprobe")
 
 # ========== MODELS ==========
 class VideoCreateRequest(BaseModel):
@@ -118,7 +131,7 @@ class ScriptProcessor:
                     "scene_number": scene_counter,
                     "text": scene_text,
                     "duration": 5,
-                    "visual_prompt": f"Visual for scene {scene_counter}: {scene_text[:50]}..."
+                    "visual_prompt": f"Scene {scene_counter}: {scene_text}"  # More descriptive for Pexels
                 })
                 
                 current_scene = []
@@ -155,22 +168,27 @@ class VideoGenerator:
             
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        self.pexels_key = os.getenv("PEXELS_API_KEY")
         
         print(f"DEBUG: HuggingFace Token: {'***' + self.hf_token[-4:] if self.hf_token else 'NOT FOUND'}")
         print(f"DEBUG: OpenRouter Key: {'***' + self.openrouter_key[-4:] if self.openrouter_key else 'NOT FOUND'}")
+        print(f"DEBUG: Pexels API Key: {'***' + self.pexels_key[-4:] if self.pexels_key else 'NOT FOUND'}")
     
     def _initialize_voices(self):
         return [
-            {"id": "radiant_girl", "name": "Radiant Girl", "gender": "female", "accent": "American"},
-            {"id": "magnetic_man", "name": "Magnetic Voiced Man", "gender": "male", "accent": "American"},
-            {"id": "compelling_lady", "name": "Compelling Lady", "gender": "female", "accent": "British"},
-            {"id": "expressive_narrator", "name": "Expressive Narrator", "gender": "male", "accent": "American"},
-            {"id": "trustworthy_man", "name": "Trustworthy Man", "gender": "male", "accent": "American"},
-            {"id": "graceful_lady", "name": "Graceful Lady", "gender": "female", "accent": "British"},
-            {"id": "aussie_bloke", "name": "Aussie Bloke", "gender": "male", "accent": "Australian"},
-            {"id": "whispering_girl", "name": "Whispering Girl", "gender": "female", "accent": "American"},
-            {"id": "diligent_man", "name": "Diligent Man", "gender": "male", "accent": "American"},
-            {"id": "gentle_man", "name": "Gentle-voiced Man", "gender": "male", "accent": "American"}
+            {"id": "radiant_girl", "name": "Radiant Girl", "gender": "female", "accent": "American", "tld": "com"},
+            {"id": "magnetic_man", "name": "Magnetic Voiced Man", "gender": "male", "accent": "American", "tld": "com"},
+            {"id": "compelling_lady", "name": "Compelling Lady", "gender": "female", "accent": "British", "tld": "co.uk"},
+            {"id": "expressive_narrator", "name": "Expressive Narrator", "gender": "male", "accent": "American", "tld": "com"},
+            {"id": "trustworthy_man", "name": "Trustworthy Man", "gender": "male", "accent": "American", "tld": "com"},
+            {"id": "graceful_lady", "name": "Graceful Lady", "gender": "female", "accent": "British", "tld": "co.uk"},
+            {"id": "aussie_bloke", "name": "Aussie Bloke", "gender": "male", "accent": "Australian", "tld": "com.au"},
+            {"id": "whispering_girl", "name": "Whispering Girl", "gender": "female", "accent": "American", "tld": "com", "slow": True},
+            {"id": "diligent_man", "name": "Diligent Man", "gender": "male", "accent": "American", "tld": "com"},
+            {"id": "gentle_man", "name": "Gentle-voiced Man", "gender": "male", "accent": "American", "tld": "com"},
+            {"id": "dummy_male", "name": "Dummy Male", "gender": "male", "accent": "Generic", "tld": "com"},
+            {"id": "dummy_female", "name": "Dummy Female", "gender": "female", "accent": "Generic", "tld": "com"},
+            {"id": "robo_voice", "name": "Robot Voice", "gender": "neutral", "accent": "Mechanical", "tld": "co.in"}
         ]
     
     def _initialize_image_styles(self):
@@ -180,7 +198,8 @@ class VideoGenerator:
             {"id": "anime", "name": "Anime", "description": "Japanese animation style"},
             {"id": "comic", "name": "Comic", "description": "Graphic novel style"},
             {"id": "lego", "name": "Lego", "description": "Block-based style"},
-            {"id": "cinematic", "name": "Cinematic", "description": "Movie-like quality"}
+            {"id": "cinematic", "name": "Cinematic", "description": "Movie-like quality"},
+            {"id": "pexels", "name": "Pexels Photo", "description": "High-quality realistic photos"}
         ]
     
     def get_voices(self):
@@ -189,7 +208,7 @@ class VideoGenerator:
     def get_image_styles(self):
         return self.image_styles
     
-    async def generate_audio(self, text: str, language: str = "en") -> Dict:
+    async def generate_audio(self, text: str, language: str = "en", voice_id: str = None) -> Dict:
         """Generate audio using gTTS"""
         try:
             audio_id = f"audio_{uuid.uuid4().hex[:8]}"
@@ -198,6 +217,14 @@ class VideoGenerator:
             # Ensure directory exists
             audio_file.parent.mkdir(parents=True, exist_ok=True)
             
+            # Get voice settings if provided
+            voice_settings = {}
+            if voice_id:
+                voice_settings = next((v for v in self.voices if v["id"] == voice_id), {})
+            
+            tld = voice_settings.get("tld", "com")
+            slow = voice_settings.get("slow", False)
+            
             lang_map = {
                 "en": "en", "es": "es", "fr": "fr", "de": "de",
                 "it": "it", "pt": "pt", "hi": "hi", "ar": "ar",
@@ -205,7 +232,7 @@ class VideoGenerator:
             }
             
             tts_lang = lang_map.get(language, "en")
-            tts = gTTS(text=text, lang=tts_lang, slow=False)
+            tts = gTTS(text=text, lang=tts_lang, tld=tld, slow=slow)
             tts.save(str(audio_file))
             
             # Get audio duration
@@ -218,13 +245,14 @@ class VideoGenerator:
             }
         except Exception as e:
             logging.error(f"Audio generation failed: {e}")
+            # Try a very basic fallback if possible
             return {"url": "", "duration": 5.0, "path": ""}
     
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get audio duration using ffprobe"""
         try:
             cmd = [
-                "ffprobe",
+                Config.get_ffprobe(),
                 "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
@@ -246,6 +274,25 @@ class VideoGenerator:
             visual_file = Config.STORAGE_DIR / "visuals" / f"{visual_id}.png"
             visual_file.parent.mkdir(parents=True, exist_ok=True)
             
+            # 0. Try Pexels First if explicitly selected as style
+            if style == "pexels" and self.pexels_key:
+                try:
+                    logging.info(f"Pexels style selected, attempting Pexels search for scene {scene_number}...")
+                    image_url = await self._generate_with_pexels(prompt, style)
+                    if image_url:
+                        response = requests.get(image_url)
+                        if response.status_code == 200:
+                            with open(visual_file, "wb") as f:
+                                f.write(response.content)
+                            logging.info(f"✓ Found visual via Pexels (Style Priority): {visual_file}")
+                            return {
+                                "url": f"/storage/visuals/{visual_id}.png",
+                                "path": str(visual_file),
+                                "style": style
+                            }
+                except Exception as pe:
+                    logging.warning(f"Pexels search failed (Style Priority): {pe}")
+
             # 1. Try Replicate (SDXL or Flux)
             if self.replicate_token:
                 try:
@@ -299,26 +346,26 @@ class VideoGenerator:
                 except Exception as he:
                     logging.warning(f"HuggingFace generation failed: {he}")
 
-            # 4. Try OpenRouter (if it supports images)
-            if self.openrouter_key:
+            # 5. Try Pexels (Search for realistic images)
+            if self.pexels_key:
                 try:
-                    logging.info(f"Attempting OpenRouter generation for scene {scene_number}...")
-                    image_url = await self._generate_with_openrouter(prompt, style)
+                    logging.info(f"Attempting Pexels search for scene {scene_number}...")
+                    image_url = await self._generate_with_pexels(prompt, style)
                     if image_url:
                         response = requests.get(image_url)
                         if response.status_code == 200:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
-                            logging.info(f"✓ Generated visual via OpenRouter: {visual_file}")
+                            logging.info(f"✓ Found visual via Pexels: {visual_file}")
                             return {
                                 "url": f"/storage/visuals/{visual_id}.png",
                                 "path": str(visual_file),
                                 "style": style
                             }
-                except Exception as oe:
-                    logging.warning(f"OpenRouter generation failed: {oe}")
+                except Exception as pe:
+                    logging.warning(f"Pexels search failed: {pe}")
 
-            # 5. Last Fallback: PIL Gradient
+            # 6. Last Fallback: PIL Gradient
             logging.info(f"Falling back to PIL generation for scene {scene_number}")
             width, height = 1080, 1920
             img = self._create_base_image(style, width, height)
@@ -459,6 +506,39 @@ class VideoGenerator:
         # However, it's safer to try a direct DALL-E or similar if we had a key.
         # Since we don't, we'll try to use OpenRouter to generate a better prompt as a fallback
         return None
+
+    async def _generate_with_pexels(self, prompt: str, style: str) -> Optional[str]:
+        """Search for a photo on Pexels based on the prompt"""
+        try:
+            if not self.pexels_key:
+                return None
+            
+            # Clean prompt for better search results
+            search_query = prompt
+            if "Visual for scene" in search_query or "Scene " in search_query:
+                # Extract the actual descriptive part
+                parts = search_query.split(":", 1)
+                if len(parts) > 1:
+                    search_query = parts[1].strip()
+            
+            # Simple keyword extraction if prompt is too long or complex
+            # For now, just use the first 150 chars for more specificity
+            search_query = search_query[:150]
+            
+            url = f"https://api.pexels.com/v1/search?query={search_query}&per_page=1"
+            headers = {"Authorization": self.pexels_key}
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("photos") and len(data["photos"]) > 0:
+                    # Prefer large or original size
+                    return data["photos"][0]["src"].get("large2x") or data["photos"][0]["src"].get("original")
+            
+            return None
+        except Exception as e:
+            logging.error(f"Pexels API error: {e}")
+            return None
     
     def _create_fallback_image(self, scene_number: int, style: str) -> Dict:
         """Create a fallback image when generation fails"""
@@ -600,126 +680,61 @@ class VideoGenerator:
             
             scene_file = scenes_dir / f"scene_{scene['scene_number']}_{uuid.uuid4().hex[:6]}.mp4"
             
-            # Get text and clean it for FFmpeg
-            scene_text = scene['text']
+            # Priority: Use PIL-based text overlay (Method 2) first, as it's more robust on Windows
+            logging.info(f"Creating scene video for scene {scene['scene_number']}...")
+            scene_text = scene.get('text', '')
+            
+            scene_path = await self._create_scene_with_simple_text(
+                visual_info["path"], 
+                audio_info["path"], 
+                scene_file, 
+                audio_info["duration"],
+                scene_text
+            )
+            
+            if scene_path:
+                return scene_path
+                
+            # Fallback 1: Try direct FFmpeg drawtext (Method 1)
+            logging.warning("PIL overlay failed or not returned path, trying FFmpeg drawtext...")
             
             # Prepare text for FFmpeg - escape special characters
-            # First, escape single quotes by wrapping in double quotes
-            text_for_ffmpeg = scene_text
+            text_for_ffmpeg = scene_text.replace("'", "'\\\\\\''").replace(':', '\\:').replace(',', '\\,')
             
-            # Replace problematic characters
-            text_for_ffmpeg = text_for_ffmpeg.replace("'", "'\\\\\\''")  # Escape single quotes
-            text_for_ffmpeg = text_for_ffmpeg.replace('"', '\\"')  # Escape double quotes
-            text_for_ffmpeg = text_for_ffmpeg.replace('%', '%%')  # Escape percent signs
-            text_for_ffmpeg = text_for_ffmpeg.replace(':', '\\:')  # Escape colons
-            text_for_ffmpeg = text_for_ffmpeg.replace('[', '\\[')  # Escape brackets
-            text_for_ffmpeg = text_for_ffmpeg.replace(']', '\\]')  # Escape brackets
-            text_for_ffmpeg = text_for_ffmpeg.replace(',', '\\,')  # Escape commas
-            
-            # Limit text length for display
             if len(text_for_ffmpeg) > 100:
-                # Find a good break point
-                if len(text_for_ffmpeg) > 150:
-                    text_for_ffmpeg = text_for_ffmpeg[:147] + "..."
-                else:
-                    # Try to break at sentence end
-                    last_period = text_for_ffmpeg[:100].rfind('.')
-                    if last_period > 50:
-                        text_for_ffmpeg = text_for_ffmpeg[:last_period + 1]
-                    else:
-                        text_for_ffmpeg = text_for_ffmpeg[:97] + "..."
-            
-            # Debug: Log the text being passed to FFmpeg
-            logging.info(f"Scene {scene['scene_number']} text (cleaned): {text_for_ffmpeg}")
-            
-            # Method 1: Try with drawtext filter (most reliable)
+                text_for_ffmpeg = text_for_ffmpeg[:97] + "..."
+
             try:
-                # Use a simpler font specification
-                if os.name == 'nt':  # Windows
-                    fontfile = "C:/Windows/Fonts/arial.ttf"
-                else:  # Linux/Mac
-                    fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-                
-                # First, test if the font file exists
-                if not os.path.exists(fontfile):
-                    fontfile = ""
-                
-                # Build FFmpeg command with text overlay
                 cmd = [
-                    "ffmpeg",
+                    Config.get_ffmpeg(),
                     "-loop", "1",
-                    "-i", visual_info["path"],      # Input image
-                    "-i", audio_info["path"],       # Input audio
-                    "-c:v", "libx264",              # Video codec
-                    "-c:a", "aac",                  # Audio codec
-                    "-b:a", "128k",                 # Audio bitrate
-                    "-pix_fmt", "yuv420p",          # Pixel format
-                    "-t", str(audio_info["duration"]),  # Duration from audio
-                    "-shortest",                    # End when audio ends
-                    "-y"                           # Overwrite output
+                    "-i", visual_info["path"],
+                    "-i", audio_info["path"],
+                    "-c:v", "libx264",
+                    "-c:a", "aac",
+                    "-pix_fmt", "yuv420p",
+                    "-t", str(audio_info["duration"]),
+                    "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,"
+                           f"drawtext=text='{text_for_ffmpeg}':fontcolor=white:fontsize=42:x=(w-text_w)/2:y=h-text_h-200",
+                    "-shortest",
+                    "-y",
+                    str(scene_file)
                 ]
                 
-                # Add video filter with text overlay
-                if fontfile:
-                    vf = (f"scale=1080:1920:force_original_aspect_ratio=decrease,"
-                          f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,"  # Scale and pad
-                          f"drawtext=text='{text_for_ffmpeg}':"             # Text overlay
-                          f"fontfile='{fontfile}':"
-                          f"fontcolor=white:"
-                          f"fontsize=42:"
-                          f"box=1:"
-                          f"boxcolor=black@0.7:"
-                          f"boxborderw=10:"
-                          f"x=(w-text_w)/2:"
-                          f"y=h-text_h-200")        # Position near bottom
-                else:
-                    vf = (f"scale=1080:1920:force_original_aspect_ratio=decrease,"
-                          f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,"  # Scale and pad
-                          f"drawtext=text='{text_for_ffmpeg}':"             # Text overlay
-                          f"fontcolor=white:"
-                          f"fontsize=42:"
-                          f"box=1:"
-                          f"boxcolor=black@0.7:"
-                          f"boxborderw=10:"
-                          f"x=(w-text_w)/2:"
-                          f"y=h-text_h-200")        # Position near bottom
-                
-                cmd.extend(["-vf", vf, str(scene_file)])
-                
-                logging.info(f"Creating scene video with text overlay...")
-                result = subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=30,
-                    encoding='utf-8',
-                    errors='ignore'
-                )
-                
-                if result.returncode == 0 and scene_file.exists() and scene_file.stat().st_size > 1024:
-                    logging.info(f"✓ Scene video with text created: {scene_file}")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0 and scene_file.exists():
                     return str(scene_file)
-                else:
-                    logging.warning(f"Text overlay failed: {result.stderr[:200]}")
-                    # Method 2: Try without fontfile specification
-                    return await self._create_scene_with_simple_text(
-                        visual_info["path"], 
-                        audio_info["path"], 
-                        scene_file, 
-                        audio_info["duration"],
-                        text_for_ffmpeg
-                    )
-                    
             except Exception as e:
-                logging.error(f"Text overlay method failed: {e}")
-                # Method 3: Create video without text overlay
-                return await self._create_simple_scene_video(
-                    visual_info["path"], 
-                    audio_info["path"], 
-                    scene_file, 
-                    audio_info["duration"]
-                )
-                
+                logging.error(f"FFmpeg drawtext failed: {e}")
+
+            # Fallback 2: Simple video without text
+            return await self._create_simple_scene_video(
+                visual_info["path"], 
+                audio_info["path"], 
+                scene_file, 
+                audio_info["duration"]
+            )
+            
         except Exception as e:
             logging.error(f"Scene video creation failed: {e}")
             return None
@@ -803,7 +818,7 @@ class VideoGenerator:
             
             # Now create video with this image
             cmd = [
-                "ffmpeg",
+                Config.get_ffmpeg(),
                 "-loop", "1",
                 "-i", str(temp_image),  # Use image with text
                 "-i", audio_path,
@@ -827,7 +842,9 @@ class VideoGenerator:
             if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1024:
                 logging.info(f"✓ Scene video with PIL text created: {output_path}")
                 return str(output_path)
-            return None
+            else:
+                logging.error(f"PIL overlay FFmpeg failed: {result.stderr[:500]}")
+                return None
             
         except Exception as e:
             logging.error(f"PIL text overlay failed: {e}")
@@ -849,7 +866,7 @@ class VideoGenerator:
             
             # Create a simple FFmpeg command
             cmd = [
-                "ffmpeg",
+                Config.get_ffmpeg(),
                 "-loop", "1",
                 "-i", str(image_path),
                 "-i", str(audio_path),
@@ -927,7 +944,7 @@ class VideoGenerator:
             subtitle_filter = f"subtitles={subtitle_path_str}:force_style='Fontsize=42,PrimaryColour=&HFFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0'"
             
             cmd = [
-                "ffmpeg",
+                Config.get_ffmpeg(),
                 "-loop", "1",
                 "-i", visual_info["path"],
                 "-i", audio_info["path"],
@@ -978,7 +995,7 @@ class VideoGenerator:
         # Method 1: Direct FFmpeg
         print("\n1. Testing direct FFmpeg drawtext...")
         cmd = [
-            "ffmpeg",
+            Config.get_ffmpeg(),
             "-f", "lavfi",
             "-i", "color=c=blue:s=640x480:d=2",
             "-vf", f"drawtext=text='{test_text}':fontcolor=white:fontsize=24:x=20:y=20",
@@ -1034,7 +1051,7 @@ class VideoGenerator:
                 project["status_message"] = f"Generating scene {i+1}/{total_scenes}..."
                 
                 # Generate audio
-                audio_info = await self.generate_audio(scene["text"], request.language)
+                audio_info = await self.generate_audio(scene["text"], request.language, request.voice)
                 if not audio_info["path"]:
                     logging.error(f"Failed to generate audio for scene {i+1}")
                     continue
@@ -1135,33 +1152,8 @@ class VideoGenerator:
             
             logging.info(f"Concatenating {len(valid_videos)} videos...")
             
-            # Method 1: Try concat demuxer
-            cmd = [
-                "ffmpeg",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_file),
-                "-c", "copy",
-                "-movflags", "+faststart",
-                "-y",
-                str(output_file)
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            # Clean up concat file
-            if concat_file.exists():
-                concat_file.unlink()
-            
-            # Check if video was created successfully
-            if result.returncode == 0 and output_file.exists():
-                file_size = output_file.stat().st_size
-                if file_size > 1024:
-                    logging.info(f"Video concatenated successfully: {output_file} ({file_size} bytes)")
-                    return f"/storage/videos/{video_id}.mp4"
-            
-            # Method 2: Try filter complex if concat failed
-            logging.warning("Concat demuxer failed, trying filter complex...")
+            # Force re-encoding (Method 2) for better cross-platform compatibility and visual consistency
+            logging.info("Using filter complex concatenation (re-encoding) for consistency...")
             return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
                 
         except Exception as e:
@@ -1174,7 +1166,7 @@ class VideoGenerator:
             output_file = Config.STORAGE_DIR / "videos" / f"{video_id}.mp4"
             
             # Build ffmpeg command with inputs
-            cmd = ["ffmpeg"]
+            cmd = [Config.get_ffmpeg()]
             
             # Add all video files as inputs
             for video in video_files:
@@ -1222,7 +1214,7 @@ class VideoGenerator:
             
             # Create a simple color video with text
             cmd = [
-                "ffmpeg",
+                Config.get_ffmpeg(),
                 "-f", "lavfi",
                 "-i", f"color=c=#667eea:s={width}x{height}:d=5",
                 "-vf", "drawtext=text='Video Preview':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2",
@@ -1431,7 +1423,8 @@ async def preview_audio(request: Dict[str, Any]):
         text = request.get("text", "")
         language = request.get("language", "en")
         
-        audio_info = await video_gen.generate_audio(text, language)
+        voice_id = request.get("voice")
+        audio_info = await video_gen.generate_audio(text, language, voice_id)
         return {
             "success": True,
             "data": {

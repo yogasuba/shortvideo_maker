@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Storage and generated assets
+storage/
+temp_assets/
+*.mp4
+*.png
+*.mp3
+
+# IDEs
+.vscode/
+.idea/
