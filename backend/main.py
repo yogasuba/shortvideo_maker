@@ -23,6 +23,19 @@ from gtts import gTTS
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 import textwrap
 import subprocess
+import requests
+from dotenv import load_dotenv
+import replicate
+import io
+import base64
+
+# Load environment variables
+env_path = Path(__file__).parent / ".env"
+print(f"DEBUG: Looking for .env at: {env_path}")
+if env_path.exists():
+    print(f"DEBUG: .env exists. Content length: {len(env_path.read_text())}")
+load_dotenv(dotenv_path=env_path)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -126,6 +139,25 @@ class VideoGenerator:
         self.voices = self._initialize_voices()
         self.image_styles = self._initialize_image_styles()
         self.script_processor = ScriptProcessor()
+        
+        # Initialize AI clients
+        self.replicate_token = os.getenv("REPLICATE_API_TOKEN")
+        self.stability_key = os.getenv("STABILITY_API_KEY")
+        
+        print(f"DEBUG: Replicate Token: {'***' + self.replicate_token[-4:] if self.replicate_token else 'NOT FOUND'}")
+        print(f"DEBUG: Stability Key: {'***' + self.stability_key[-4:] if self.stability_key else 'NOT FOUND'}")
+        
+        if self.replicate_token:
+            # os.environ["REPLICATE_API_TOKEN"] = self.replicate_token
+            self.replicate_client = replicate.Client(api_token=self.replicate_token)
+        else:
+            self.replicate_client = None
+            
+        self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        
+        print(f"DEBUG: HuggingFace Token: {'***' + self.hf_token[-4:] if self.hf_token else 'NOT FOUND'}")
+        print(f"DEBUG: OpenRouter Key: {'***' + self.openrouter_key[-4:] if self.openrouter_key else 'NOT FOUND'}")
     
     def _initialize_voices(self):
         return [
@@ -207,27 +239,91 @@ class VideoGenerator:
             words = len(str(audio_path).split()) if isinstance(audio_path, str) else 0
             return max(3.0, min(words * 0.15, 10.0))
     
-    def generate_visual(self, prompt: str, style: str, scene_number: int) -> Dict:
-        """Generate visual with different styles"""
+    async def generate_visual(self, prompt: str, style: str, scene_number: int) -> Dict:
+        """Generate visual with AI providers or fallback to PIL"""
         try:
             visual_id = f"visual_{uuid.uuid4().hex[:8]}"
             visual_file = Config.STORAGE_DIR / "visuals" / f"{visual_id}.png"
-            
-            # Ensure directory exists
             visual_file.parent.mkdir(parents=True, exist_ok=True)
             
+            # 1. Try Replicate (SDXL or Flux)
+            if self.replicate_token:
+                try:
+                    logging.info(f"Attempting Replicate generation for scene {scene_number}...")
+                    image_url = await self._generate_with_replicate(prompt, style)
+                    if image_url:
+                        response = requests.get(image_url)
+                        if response.status_code == 200:
+                            with open(visual_file, "wb") as f:
+                                f.write(response.content)
+                            logging.info(f"✓ Generated visual via Replicate: {visual_file}")
+                            return {
+                                "url": f"/storage/visuals/{visual_id}.png",
+                                "path": str(visual_file),
+                                "style": style
+                            }
+                except Exception as re:
+                    logging.warning(f"Replicate generation failed: {re}")
+
+            # 2. Try Stability AI
+            if self.stability_api:
+                try:
+                    logging.info(f"Attempting Stability generation for scene {scene_number}...")
+                    image_data = await self._generate_with_stability(prompt, style)
+                    if image_data:
+                        with open(visual_file, "wb") as f:
+                            f.write(image_data)
+                        logging.info(f"✓ Generated visual via Stability: {visual_file}")
+                        return {
+                            "url": f"/storage/visuals/{visual_id}.png",
+                            "path": str(visual_file),
+                            "style": style
+                        }
+                except Exception as se:
+                    logging.warning(f"Stability generation failed: {se}")
+
+            # 3. Try HuggingFace
+            if self.hf_token:
+                try:
+                    logging.info(f"Attempting HuggingFace generation for scene {scene_number}...")
+                    image_data = await self._generate_with_huggingface(prompt, style)
+                    if image_data and len(image_data) > 5000:
+                        with open(visual_file, "wb") as f:
+                            f.write(image_data)
+                        logging.info(f"✓ Generated visual via HuggingFace: {visual_file}")
+                        return {
+                            "url": f"/storage/visuals/{visual_id}.png",
+                            "path": str(visual_file),
+                            "style": style
+                        }
+                except Exception as he:
+                    logging.warning(f"HuggingFace generation failed: {he}")
+
+            # 4. Try OpenRouter (if it supports images)
+            if self.openrouter_key:
+                try:
+                    logging.info(f"Attempting OpenRouter generation for scene {scene_number}...")
+                    image_url = await self._generate_with_openrouter(prompt, style)
+                    if image_url:
+                        response = requests.get(image_url)
+                        if response.status_code == 200:
+                            with open(visual_file, "wb") as f:
+                                f.write(response.content)
+                            logging.info(f"✓ Generated visual via OpenRouter: {visual_file}")
+                            return {
+                                "url": f"/storage/visuals/{visual_id}.png",
+                                "path": str(visual_file),
+                                "style": style
+                            }
+                except Exception as oe:
+                    logging.warning(f"OpenRouter generation failed: {oe}")
+
+            # 5. Last Fallback: PIL Gradient
+            logging.info(f"Falling back to PIL generation for scene {scene_number}")
             width, height = 1080, 1920
-            
-            # Create image with PIL
             img = self._create_base_image(style, width, height)
-            
-            # Add scene number to image
             img = self._add_scene_number_to_image(img, scene_number, style)
-            
-            # Save image
             img.save(str(visual_file), "PNG", quality=95)
-            
-            logging.info(f"Generated visual: {visual_file}")
             
             return {
                 "url": f"/storage/visuals/{visual_id}.png",
@@ -236,9 +332,133 @@ class VideoGenerator:
             }
             
         except Exception as e:
-            logging.error(f"Visual generation failed: {e}")
-            # Create a simple fallback image
+            logging.error(f"Visual generation failed completely: {e}")
             return self._create_fallback_image(scene_number, style)
+
+    async def _generate_with_replicate(self, prompt: str, style: str) -> Optional[str]:
+        """Generate image using Replicate's Flux model"""
+        try:
+            if not self.replicate_client:
+                return None
+                
+            full_prompt = f"{prompt}, {style} style, high quality, 4k, cinematic"
+            if style == "anime":
+                full_prompt = f"anime style, {prompt}, vibrant colors, high resolution"
+            elif style == "pixar_art":
+                full_prompt = f"pixar animated movie style, 3d render, {prompt}, cute, high detail"
+            
+            print(f"DEBUG: Using Replicate model: stability-ai/sdxl")
+            output = self.replicate_client.run(
+                "stability-ai/sdxl:7762fd0e20c1440f994645da621dc7fb0217595f391809084897f7fa043588da",
+                input={
+                    "prompt": full_prompt,
+                    "negative_prompt": "low quality, blurry, distorted, text, watermark",
+                    "width": 1024,
+                    "height": 1024,
+                    "num_outputs": 1
+                }
+            )
+            if output and isinstance(output, list) and len(output) > 0:
+                return output[0]
+            return None
+        except Exception as e:
+            logging.error(f"Replicate API error: {e}")
+            return None
+
+    async def _generate_with_stability(self, prompt: str, style: str) -> Optional[bytes]:
+        """Generate image using Stability AI's REST API"""
+        try:
+            if not self.stability_key:
+                return None
+                
+            full_prompt = f"{prompt}, {style} style, high quality, 4k"
+            
+            engine_id = "stable-diffusion-xl-1024-v1-0"
+            api_host = "https://api.stability.ai"
+            
+            response = requests.post(
+                f"{api_host}/v1/generation/{engine_id}/text-to-image",
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self.stability_key}"
+                },
+                json={
+                    "text_prompts": [
+                        {
+                            "text": full_prompt,
+                            "weight": 1
+                        },
+                        {
+                            "text": "blurry, low quality, distorted, text, watermark",
+                            "weight": -1
+                        }
+                    ],
+                    "cfg_scale": 7,
+                    "height": 1024,
+                    "width": 1024,
+                    "samples": 1,
+                    "steps": 30,
+                },
+            )
+
+            if response.status_code != 200:
+                logging.error(f"Stability API error: {response.text}")
+                return None
+
+            data = response.json()
+            for i, image in enumerate(data["artifacts"]):
+                if image["finishReason"] == "CONTENT_FILTERED":
+                    logging.warning("Stability AI filtered the request")
+                    return None
+                return base64.b64decode(image["base64"])
+            
+            return None
+        except Exception as e:
+            logging.error(f"Stability API error: {e}")
+            return None
+
+    async def _generate_with_huggingface(self, prompt: str, style: str) -> Optional[bytes]:
+        """Generate image using Hugging Face's Inference API"""
+        try:
+            if not self.hf_token:
+                return None
+            
+            # Using Stable Diffusion v1.5 (Non-gated)
+            api_url = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
+            headers = {"Authorization": f"Bearer {self.hf_token}"}
+            
+            full_prompt = f"{prompt}, {style} style, high quality, masterpiece, cinematic"
+            
+            response = requests.post(
+                api_url, 
+                headers=headers, 
+                json={
+                    "inputs": full_prompt,
+                    "parameters": {"negative_prompt": "blurry, low quality, distorted, text, watermark"}
+                },
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                return response.content
+            elif response.status_code == 503:
+                logging.info("HuggingFace model is loading...")
+                return None
+            else:
+                logging.error(f"HuggingFace API error: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logging.error(f"HuggingFace API error: {e}")
+            return None
+
+    async def _generate_with_openrouter(self, prompt: str, style: str) -> Optional[str]:
+        """Generate image using OpenRouter (as a proxy if available) or other providers"""
+        # Note: OpenRouter primarily handles LLMs. 
+        # But we can try to use it for image generation if the key allows.
+        # However, it's safer to try a direct DALL-E or similar if we had a key.
+        # Since we don't, we'll try to use OpenRouter to generate a better prompt as a fallback
+        return None
     
     def _create_fallback_image(self, scene_number: int, style: str) -> Dict:
         """Create a fallback image when generation fails"""
@@ -820,7 +1040,7 @@ class VideoGenerator:
                     continue
                 
                 # Generate visual
-                visual_info = self.generate_visual(
+                visual_info = await self.generate_visual(
                     scene.get("visual_prompt", scene["text"]),
                     request.image_style,
                     scene["scene_number"]
@@ -1147,7 +1367,7 @@ async def preview_visual(
 ):
     """Preview visual generation"""
     try:
-        visual_info = video_gen.generate_visual(text, style, scene_number)
+        visual_info = await video_gen.generate_visual(text, style, scene_number)
         return {
             "success": True,
             "data": {
