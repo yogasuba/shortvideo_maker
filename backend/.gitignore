@@ -6,7 +6,16 @@ __pycache__/
 venv/
 ENV/
 env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment files
 .env
+.env.local
+.env.*.local
+*.env
 
 # Storage and generated assets
 storage/
@@ -14,7 +23,38 @@ temp_assets/
 *.mp4
 *.png
 *.mp3
+*.wav
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# Test files and outputs
+test_*.txt
+test_*.mp4
+test_*.mp3
+test_*.png
+*.log
 
 # IDEs
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (if any frontend dependencies)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.cache

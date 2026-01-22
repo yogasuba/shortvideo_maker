@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
 # Media processing
@@ -74,14 +74,16 @@ class VideoCreateRequest(BaseModel):
     resolution: str = "1080x1920"
     scenes_count: int = Field(8, ge=4, le=16)
     
-    @validator('language')
+    @field_validator('language')
+    @classmethod
     def validate_language(cls, v):
         valid = ["en", "es", "fr", "de", "it", "pt", "hi", "ar", "zh", "ja", "ko"]
         if v not in valid:
             raise ValueError(f"Language must be one of {valid}")
         return v
     
-    @validator('resolution')
+    @field_validator('resolution')
+    @classmethod
     def validate_resolution(cls, v):
         valid = ["720x1280", "1080x1920", "1440x2560"]
         if v not in valid:
@@ -169,26 +171,26 @@ class VideoGenerator:
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
         self.pexels_key = os.getenv("PEXELS_API_KEY")
+        self.audixa_key = os.getenv("AUDIXA_API_KEY")
         
         print(f"DEBUG: HuggingFace Token: {'***' + self.hf_token[-4:] if self.hf_token else 'NOT FOUND'}")
         print(f"DEBUG: OpenRouter Key: {'***' + self.openrouter_key[-4:] if self.openrouter_key else 'NOT FOUND'}")
         print(f"DEBUG: Pexels API Key: {'***' + self.pexels_key[-4:] if self.pexels_key else 'NOT FOUND'}")
+        print(f"DEBUG: Audixa API Key: {'***' + self.audixa_key[-4:] if self.audixa_key else 'NOT FOUND'}")
     
     def _initialize_voices(self):
+        # Using only FREE Audixa voices
         return [
-            {"id": "radiant_girl", "name": "Radiant Girl", "gender": "female", "accent": "American", "tld": "com"},
-            {"id": "magnetic_man", "name": "Magnetic Voiced Man", "gender": "male", "accent": "American", "tld": "com"},
-            {"id": "compelling_lady", "name": "Compelling Lady", "gender": "female", "accent": "British", "tld": "co.uk"},
-            {"id": "expressive_narrator", "name": "Expressive Narrator", "gender": "male", "accent": "American", "tld": "com"},
-            {"id": "trustworthy_man", "name": "Trustworthy Man", "gender": "male", "accent": "American", "tld": "com"},
-            {"id": "graceful_lady", "name": "Graceful Lady", "gender": "female", "accent": "British", "tld": "co.uk"},
-            {"id": "aussie_bloke", "name": "Aussie Bloke", "gender": "male", "accent": "Australian", "tld": "com.au"},
-            {"id": "whispering_girl", "name": "Whispering Girl", "gender": "female", "accent": "American", "tld": "com", "slow": True},
-            {"id": "diligent_man", "name": "Diligent Man", "gender": "male", "accent": "American", "tld": "com"},
-            {"id": "gentle_man", "name": "Gentle-voiced Man", "gender": "male", "accent": "American", "tld": "com"},
-            {"id": "dummy_male", "name": "Dummy Male", "gender": "male", "accent": "Generic", "tld": "com"},
-            {"id": "dummy_female", "name": "Dummy Female", "gender": "female", "accent": "Generic", "tld": "com"},
-            {"id": "robo_voice", "name": "Robot Voice", "gender": "neutral", "accent": "Mechanical", "tld": "co.in"}
+            {"id": "am_ethan", "name": "Ethan (Male)", "gender": "male", "accent": "American"},
+            {"id": "af_lily", "name": "Lily (Female)", "gender": "female", "accent": "American"},
+            {"id": "af_zoey", "name": "Zoey (Female)", "gender": "female", "accent": "American"},
+            {"id": "af_aria", "name": "Aria (Female)", "gender": "female", "accent": "American"},
+            {"id": "am_eric", "name": "Eric (Male)", "gender": "male", "accent": "American"},
+            {"id": "bf_alice", "name": "Alice (Female)", "gender": "female", "accent": "British"},
+            {"id": "bf_chloe", "name": "Chloe (Female)", "gender": "female", "accent": "British"},
+            {"id": "bm_harry", "name": "Harry (Male)", "gender": "male", "accent": "British"},
+            {"id": "bm_oliver", "name": "Oliver (Male)", "gender": "male", "accent": "British"},
+            {"id": "bm_george", "name": "George (Male)", "gender": "male", "accent": "British"}
         ]
     
     def _initialize_image_styles(self):
@@ -209,43 +211,86 @@ class VideoGenerator:
         return self.image_styles
     
     async def generate_audio(self, text: str, language: str = "en", voice_id: str = None) -> Dict:
-        """Generate audio using gTTS"""
+        """Generate audio using Audixa AI TTS API"""
         try:
+            if not self.audixa_key:
+                logging.error("Audixa API key not found. Please provide AUDIXA_API_KEY in .env.")
+                # Fallback to a simple 5s duration placeholder if key missing
+                return {"url": "", "duration": 5.0, "path": ""}
+
             audio_id = f"audio_{uuid.uuid4().hex[:8]}"
             audio_file = Config.STORAGE_DIR / "audio" / f"{audio_id}.mp3"
-            
-            # Ensure directory exists
             audio_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Get voice settings if provided
-            voice_settings = {}
-            if voice_id:
-                voice_settings = next((v for v in self.voices if v["id"] == voice_id), {})
-            
-            tld = voice_settings.get("tld", "com")
-            slow = voice_settings.get("slow", False)
-            
-            lang_map = {
-                "en": "en", "es": "es", "fr": "fr", "de": "de",
-                "it": "it", "pt": "pt", "hi": "hi", "ar": "ar",
-                "zh": "zh-CN", "ja": "ja", "ko": "ko"
+
+            # Step 1: Submit TTS request
+            submit_url = "https://api.audixa.ai/v2/tts"
+            headers = {
+                "x-api-key": self.audixa_key,
+                "Content-Type": "application/json"
             }
             
-            tts_lang = lang_map.get(language, "en")
-            tts = gTTS(text=text, lang=tts_lang, tld=tld, slow=slow)
-            tts.save(str(audio_file))
+            # Find the correct voice id or default to Ethan
+            voice = voice_id if voice_id else "am_ethan"
             
-            # Get audio duration
-            duration = self._get_audio_duration(audio_file)
-            
-            return {
-                "url": f"/storage/audio/{audio_id}.mp3",
-                "duration": duration,
-                "path": str(audio_file)
+            payload = {
+                "text": text,
+                "voice": voice,
+                "model": "base",
+                "speed": 1.0
             }
+
+            logging.info(f"Submitting TTS request to Audixa for voice {voice}...")
+            response = requests.post(submit_url, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code not in [200, 201]:
+                logging.error(f"Audixa TTS submission failed: {response.status_code} - {response.text}")
+                return {"url": "", "duration": 5.0, "path": ""}
+
+            generation_id = response.json().get("generation_id")
+            if not generation_id:
+                logging.error("No generation_id returned from Audixa")
+                return {"url": "", "duration": 5.0, "path": ""}
+
+            # Step 2: Poll status
+            status_url = f"https://api.audixa.ai/v2/status?generation_id={generation_id}"
+            max_retries = 120  # increased to 120 seconds
+            retry_count = 0
+            
+            logging.info(f"Polling Audixa status for generation_id: {generation_id}")
+            while retry_count < max_retries:
+                status_response = requests.get(status_url, headers=headers, timeout=10)
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    status = status_data.get("status")
+                    
+                    if status == "Completed":
+                        audio_url = status_data.get("url")
+                        if audio_url:
+                            # Step 3: Download audio file
+                            logging.info(f"Audixa generation completed. Downloading from {audio_url}...")
+                            audio_content = requests.get(audio_url).content
+                            with open(audio_file, "wb") as f:
+                                f.write(audio_content)
+                            
+                            # Get actual duration
+                            duration = self._get_audio_duration(audio_file)
+                            return {
+                                "url": f"/storage/audio/{audio_id}.mp3",
+                                "duration": duration,
+                                "path": str(audio_file)
+                            }
+                    elif status == "Failed":
+                        logging.error(f"Audixa generation failed for {generation_id}")
+                        break
+                
+                retry_count += 1
+                await asyncio.sleep(1)
+
+            logging.error(f"Audixa TTS timed out or failed for {generation_id}")
+            return {"url": "", "duration": 5.0, "path": ""}
+
         except Exception as e:
-            logging.error(f"Audio generation failed: {e}")
-            # Try a very basic fallback if possible
+            logging.error(f"Audixa audio generation error: {e}")
             return {"url": "", "duration": 5.0, "path": ""}
     
     def _get_audio_duration(self, audio_path: Path) -> float:
@@ -1424,6 +1469,7 @@ async def preview_audio(request: Dict[str, Any]):
         language = request.get("language", "en")
         
         voice_id = request.get("voice")
+        logging.info(f"Audio Preview Request: voice={voice_id}, language={language}")
         audio_info = await video_gen.generate_audio(text, language, voice_id)
         return {
             "success": True,

@@ -1,0 +1,492 @@
+{
+  "user_id": "user_77c8c912-a9e6-4f46-9f83-66c2d7b0c67d",
+  "model": "base",
+  "voices": [
+    {
+      "voice_id": "am_ethan",
+      "name": "Ethan",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Ethan",
+      "free": true
+    },
+    {
+      "voice_id": "af_lily",
+      "name": "Lily",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Lily",
+      "free": true
+    },
+    {
+      "voice_id": "af_zoey",
+      "name": "Zoey",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Zoey",
+      "free": true
+    },
+    {
+      "voice_id": "af_aria",
+      "name": "Aria",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Aria",
+      "free": true
+    },
+    {
+      "voice_id": "af_bella",
+      "name": "Bella",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Bella",
+      "free": false
+    },
+    {
+      "voice_id": "af_jessica",
+      "name": "Jessica",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Jessica",
+      "free": false
+    },
+    {
+      "voice_id": "af_karen",
+      "name": "Karen",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Karen",
+      "free": false
+    },
+    {
+      "voice_id": "af_nicole",
+      "name": "Nicole",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Nicole",
+      "free": false
+    },
+    {
+      "voice_id": "af_nova",
+      "name": "Nova",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Nova",
+      "free": false
+    },
+    {
+      "voice_id": "af_river",
+      "name": "River",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_River",
+      "free": false
+    },
+    {
+      "voice_id": "af_sarah",
+      "name": "Sarah",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Sarah",
+      "free": false
+    },
+    {
+      "voice_id": "af_skylar",
+      "name": "Skylar",
+      "model": "base",
+      "gender": "Female",
+      "accent": "American",
+      "description": "VoiceID: af_Skylar",
+      "free": false
+    },
+    {
+      "voice_id": "am_jax",
+      "name": "Jax",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Jax",
+      "free": false
+    },
+    {
+      "voice_id": "am_eric",
+      "name": "Eric",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Eric",
+      "free": true
+    },
+    {
+      "voice_id": "am_ryder",
+      "name": "Ryder",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Ryder",
+      "free": false
+    },
+    {
+      "voice_id": "am_liam",
+      "name": "Liam",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Liam",
+      "free": false
+    },
+    {
+      "voice_id": "am_mike",
+      "name": "Mike",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Mike",
+      "free": false
+    },
+    {
+      "voice_id": "am_onyx",
+      "name": "Onyx",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Onyx",
+      "free": false
+    },
+    {
+      "voice_id": "am_puck",
+      "name": "Puck",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Puck",
+      "free": false
+    },
+    {
+      "voice_id": "am_nick",
+      "name": "Nick",
+      "model": "base",
+      "gender": "Male",
+      "accent": "American",
+      "description": "VoiceID: am_Nick",
+      "free": false
+    },
+    {
+      "voice_id": "bf_alice",
+      "name": "Alice",
+      "model": "base",
+      "gender": "Female",
+      "accent": "British",
+      "description": "VoiceID: bf_Alice",
+      "free": true
+    },
+    {
+      "voice_id": "bf_chloe",
+      "name": "Chloe",
+      "model": "base",
+      "gender": "Female",
+      "accent": "British",
+      "description": "VoiceID: bf_Chloe",
+      "free": true
+    },
+    {
+      "voice_id": "bf_isla",
+      "name": "Isla",
+      "model": "base",
+      "gender": "Female",
+      "accent": "British",
+      "description": "VoiceID: bf_Isla",
+      "free": false
+    },
+    {
+      "voice_id": "bf_ruby",
+      "name": "Ruby",
+      "model": "base",
+      "gender": "Female",
+      "accent": "British",
+      "description": "VoiceID: bf_Ruby",
+      "free": false
+    },
+    {
+      "voice_id": "bm_harry",
+      "name": "Harry",
+      "model": "base",
+      "gender": "Male",
+      "accent": "British",
+      "description": "VoiceID: bm_Harry",
+      "free": true
+    },
+    {
+      "voice_id": "bm_oliver",
+      "name": "Oliver",
+      "model": "base",
+      "gender": "Male",
+      "accent": "British",
+      "description": "VoiceID: bm_Oliver",
+      "free": true
+    },
+    {
+      "voice_id": "bm_george",
+      "name": "George",
+      "model": "base",
+      "gender": "Male",
+      "accent": "British",
+      "description": "VoiceID: bm_George",
+      "free": true
+    },
+    {
+      "voice_id": "bm_lewis",
+      "name": "Lewis",
+      "model": "base",
+      "gender": "Male",
+      "accent": "British",
+      "description": "VoiceID: bm_Lewis",
+      "free": false
+    },
+    {
+      "voice_id": "jf_yui",
+      "name": "Yui",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Japanese",
+      "description": "VoiceID: jf_Yui",
+      "free": false
+    },
+    {
+      "voice_id": "jf_misa",
+      "name": "Misa",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Japanese",
+      "description": "VoiceID: jf_Misa",
+      "free": false
+    },
+    {
+      "voice_id": "jf_rin",
+      "name": "Rin",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Japanese",
+      "description": "VoiceID: jf_Rin",
+      "free": false
+    },
+    {
+      "voice_id": "jf_saki",
+      "name": "Saki",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Japanese",
+      "description": "VoiceID: jf_Saki",
+      "free": false
+    },
+    {
+      "voice_id": "jm_kaito",
+      "name": "Kaito",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Japanese",
+      "description": "VoiceID: jm_Kaito",
+      "free": false
+    },
+    {
+      "voice_id": "zf_mei",
+      "name": "Mei",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zf_Mei",
+      "free": false
+    },
+    {
+      "voice_id": "zf_ling",
+      "name": "Ling",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zf_Ling",
+      "free": false
+    },
+    {
+      "voice_id": "zf_xiao",
+      "name": "Xiao",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zf_Xiao",
+      "free": false
+    },
+    {
+      "voice_id": "zf_yi",
+      "name": "Yi",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zf_Yi",
+      "free": false
+    },
+    {
+      "voice_id": "zm_jian",
+      "name": "Jian",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zm_Jian",
+      "free": false
+    },
+    {
+      "voice_id": "zm_xi",
+      "name": "Xi",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zm_Xi",
+      "free": false
+    },
+    {
+      "voice_id": "zm_xia",
+      "name": "Xia",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zm_Xia",
+      "free": false
+    },
+    {
+      "voice_id": "zm_yang",
+      "name": "Yang",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Chinese Mandarin",
+      "description": "VoiceID: zm_Yang",
+      "free": false
+    },
+    {
+      "voice_id": "ef_dora",
+      "name": "Dora",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Spanish",
+      "description": "VoiceID: ef_Dora",
+      "free": false
+    },
+    {
+      "voice_id": "em_carlos",
+      "name": "Carlos",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Spanish",
+      "description": "VoiceID: em_Carlos",
+      "free": false
+    },
+    {
+      "voice_id": "em_juan",
+      "name": "Juan",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Spanish",
+      "description": "VoiceID: em_Juan",
+      "free": false
+    },
+    {
+      "voice_id": "ff_camille",
+      "name": "Camille",
+      "model": "base",
+      "gender": "Female",
+      "accent": "French",
+      "description": "VoiceID: ff_Camille",
+      "free": false
+    },
+    {
+      "voice_id": "hf_anaya",
+      "name": "Anaya",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Hindi",
+      "description": "VoiceID: hf_Anaya",
+      "free": false
+    },
+    {
+      "voice_id": "hf_kavya",
+      "name": "Kavya",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Hindi",
+      "description": "VoiceID: hf_Kavya",
+      "free": false
+    },
+    {
+      "voice_id": "hm_arjun",
+      "name": "Arjun",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Hindi",
+      "description": "VoiceID: hm_Arjun",
+      "free": false
+    },
+    {
+      "voice_id": "hm_rahul",
+      "name": "Rahul",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Hindi",
+      "description": "VoiceID: hm_Rahul",
+      "free": false
+    },
+    {
+      "voice_id": "if_sara",
+      "name": "Sara",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Italian",
+      "description": "VoiceID: if_Sara",
+      "free": false
+    },
+    {
+      "voice_id": "im_nicola",
+      "name": "Nicola",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Italian",
+      "description": "VoiceID: im_Nicola",
+      "free": false
+    },
+    {
+      "voice_id": "pf_lara",
+      "name": "Lara",
+      "model": "base",
+      "gender": "Female",
+      "accent": "Brazilian Portuguese",
+      "description": "VoiceID: pf_Lara",
+      "free": false
+    },
+    {
+      "voice_id": "pm_bruno",
+      "name": "Bruno",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Brazilian Portuguese",
+      "description": "VoiceID: pm_Bruno",
+      "free": false
+    },
+    {
+      "voice_id": "pm_tiago",
+      "name": "Tiago",
+      "model": "base",
+      "gender": "Male",
+      "accent": "Brazilian Portuguese",
+      "description": "VoiceID: pm_Tiago",
+      "free": false
+    }
+  ]
+}

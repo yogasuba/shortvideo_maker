@@ -717,6 +717,9 @@ Artificial intelligence is revolutionizing every industry. From healthcare diagn
                         <div class="voice-icon">
                             <i class="bi bi-${voice.gender === 'female' ? 'person-heart' : 'person-arms-up'}"></i>
                         </div>
+                        <div class="voice-loader" id="loader-${voice.id}" style="display: none;">
+                            <span class="loading-spinner" style="width: 24px; height: 24px; border-width: 2px;"></span>
+                        </div>
                         <h6 class="mb-1">${voice.name}</h6>
                         <small class="text-muted">${voice.accent} • ${voice.gender}</small>
                     </div>
@@ -873,6 +876,14 @@ Remember, entrepreneurship is a journey of learning. Embrace failures as opportu
             });
             document.getElementById(`voice-${voiceId}`).classList.add('selected');
             
+            // Show loader and hide voice icon
+            const voiceOption = document.getElementById(`voice-${voiceId}`);
+            const voiceIcon = voiceOption.querySelector('.voice-icon');
+            const voiceLoader = document.getElementById(`loader-${voiceId}`);
+            
+            if (voiceIcon) voiceIcon.style.display = 'none';
+            if (voiceLoader) voiceLoader.style.display = 'block';
+            
             // Preview voice
             previewVoiceSample(voiceId);
         }
@@ -894,8 +905,17 @@ async function previewVoiceSample(voiceId) {
     const sampleText = "This is a preview of how your video will sound with this voice.";
     const language = document.getElementById('language').value;
     
+    // Helper function to hide loader and show icon
+    function hideLoader() {
+        const voiceOption = document.getElementById(`voice-${voiceId}`);
+        const voiceIcon = voiceOption ? voiceOption.querySelector('.voice-icon') : null;
+        const voiceLoader = document.getElementById(`loader-${voiceId}`);
+        
+        if (voiceIcon) voiceIcon.style.display = 'block';
+        if (voiceLoader) voiceLoader.style.display = 'none';
+    }
+    
     try {
-        // Using JSON approach
         const response = await fetch(`${API_BASE}/api/audio/preview`, {
             method: 'POST',
             headers: {
@@ -903,76 +923,35 @@ async function previewVoiceSample(voiceId) {
             },
             body: JSON.stringify({
                 text: sampleText,
-                language: language
+                language: language,
+                voice: voiceId
             })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            // Create audio element and play
             const audio = new Audio(`${API_BASE}${data.data.url}`);
+            
+            // Hide loader when audio can play
+            audio.addEventListener('canplaythrough', function() {
+                hideLoader();
+            });
+            
+            // Also hide loader when audio ends or on error
+            audio.addEventListener('ended', hideLoader);
+            audio.addEventListener('error', hideLoader);
+            
             audio.play();
+        } else {
+            hideLoader();
         }
     } catch (error) {
         console.error('Voice preview failed:', error);
+        hideLoader();
     }
 }
-// Update the createVideo function to use JSON
-async function createVideo() {
-    if (!validateStep(4)) return;
-    
-    // Collect data
-    const title = document.getElementById('videoTitle').value.trim();
-    const script = document.getElementById('script').value.trim();
-    const language = document.getElementById('language').value;
-    const tone = document.getElementById('tone').value;
-    const scenesCount = parseInt(document.getElementById('sceneSlider').value);
-    
-    const requestData = {
-        title: title,
-        script: script,
-        language: language,
-        tone: tone,
-        voice: selectedVoice,
-        image_style: selectedStyle,
-        resolution: '1080x1920',
-        scenes_count: scenesCount
-    };
-    
-    // Show progress step
-    nextStep(5);
-    
-    // Disable create button
-    document.getElementById('createVideoBtn').disabled = true;
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/videos/create`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData)
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            currentProjectId = data.data.project_id;
-            startProgressPolling();
-        } else {
-            throw new Error('Failed to start video creation');
-        }
-    } catch (error) {
-        showAlert(`Error: ${error.message}`, 'error');
-        prevStep(4);
-        document.getElementById('createVideoBtn').disabled = false;
-    }
-}
+
         
         // Preview script split
 // Update this function in your JavaScript
