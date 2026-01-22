@@ -293,6 +293,23 @@
             line-height: 1.5;
         }
         
+        .scene-text-container {
+            margin-left: 10px;
+        }
+        
+        .scene-text-edit {
+            font-size: 0.95rem;
+            border: 2px solid var(--primary);
+            border-radius: 5px;
+            padding: 8px;
+            resize: vertical;
+        }
+        
+        .scene-text-edit:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
         .example-scripts {
             background: #f0f4ff;
             border-radius: 10px;
@@ -610,6 +627,7 @@ Artificial intelligence is revolutionizing every industry. From healthcare diagn
         let currentVideoUrl = '';
         let config = null;
         let scenesPreview = null;
+        let previewModalInstance = null; // Store modal instance globally
         
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -1019,8 +1037,8 @@ async function previewScriptSplit() {
     }
 }        
         // Show script preview modal
-        function showScriptPreview(data) {
-            const modal = new bootstrap.Modal(document.getElementById('previewModal'));
+        function showScriptPreview(data, skipShow = false) {
+            const modalElement = document.getElementById('previewModal');
             const content = document.getElementById('previewContent');
             
             let html = `
@@ -1034,23 +1052,142 @@ async function previewScriptSplit() {
                 <h6 class="fw-bold mb-3">Scene Breakdown:</h6>
             `;
             
-            data.scenes.forEach(scene => {
+            data.scenes.forEach((scene, index) => {
                 html += `
-                    <div class="scene-preview-card">
-                        <div class="d-flex align-items-start">
-                            <div class="scene-number">${scene.scene_number}</div>
-                            <div class="scene-text">${scene.text}</div>
+                    <div class="scene-preview-card" id="scene-card-${index}">
+                        <div class="d-flex align-items-start justify-content-between">
+                            <div class="d-flex align-items-start flex-grow-1">
+                                <div class="scene-number">${scene.scene_number}</div>
+                                <div class="scene-text-container flex-grow-1">
+                                    <div class="scene-text" id="scene-text-${index}">${scene.text}</div>
+                                    <textarea class="form-control scene-text-edit d-none" id="scene-edit-${index}" rows="3">${scene.text}</textarea>
+                                </div>
+                            </div>
+                            <div class="btn-group ms-2" role="group">
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="editScene(${index})" id="edit-btn-${index}" title="Edit scene">
+                                    <i class="bi bi-pencil-fill"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteScene(${index})" title="Delete scene">
+                                    <i class="bi bi-trash-fill"></i>
+                                </button>
+                            </div>
                         </div>
-                        <small class="text-muted mt-2 d-block">
+                        <small class="text-muted mt-2 d-block" id="scene-preview-${index}">
                             <i class="bi bi-clock me-1"></i> ${scene.duration}s • 
-                            <i class="bi bi-image me-1 ms-2"></i> ${scene.visual_prompt.substring(0, 60)}...
+                            <i class="bi bi-image me-1 ms-2"></i> Scene ${scene.scene_number}: ${scene.text.substring(0, 60)}...
                         </small>
                     </div>
                 `;
             });
             
             content.innerHTML = html;
-            modal.show();
+            
+            // Only show modal if not skipping (i.e., first time or explicit show)
+            if (!skipShow) {
+                // Clean up any existing backdrops first
+                cleanupModalBackdrops();
+                
+                // Create or get modal instance
+                if (!previewModalInstance) {
+                    previewModalInstance = new bootstrap.Modal(modalElement);
+                }
+                previewModalInstance.show();
+            }
+        }
+        
+        // Edit scene function
+        function editScene(index) {
+            const textDiv = document.getElementById(`scene-text-${index}`);
+            const editTextarea = document.getElementById(`scene-edit-${index}`);
+            const editBtn = document.getElementById(`edit-btn-${index}`);
+            
+            if (editTextarea.classList.contains('d-none')) {
+                // Switch to edit mode
+                textDiv.classList.add('d-none');
+                editTextarea.classList.remove('d-none');
+                editTextarea.focus();
+                editBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                editBtn.classList.remove('btn-outline-primary');
+                editBtn.classList.add('btn-success');
+                editBtn.title = 'Save changes';
+            } else {
+                // Save changes
+                const newText = editTextarea.value.trim();
+                if (newText) {
+                    textDiv.textContent = newText;
+                    // Update the scenesPreview data
+                    if (scenesPreview && scenesPreview.scenes[index]) {
+                        scenesPreview.scenes[index].text = newText;
+                        // Also update the visual prompt to match the new text
+                        scenesPreview.scenes[index].visual_prompt = newText;
+                        
+                        // Update the preview text below the scene
+                        const previewElement = document.getElementById(`scene-preview-${index}`);
+                        if (previewElement) {
+                            previewElement.innerHTML = `
+                                <i class="bi bi-clock me-1"></i> ${scenesPreview.scenes[index].duration}s • 
+                                <i class="bi bi-image me-1 ms-2"></i> Scene ${scenesPreview.scenes[index].scene_number}: ${newText.substring(0, 60)}...
+                            `;
+                        }
+                        
+                        // Update the script textarea with edited content
+                        updateScriptFromScenes();
+                    }
+                }
+                textDiv.classList.remove('d-none');
+                editTextarea.classList.add('d-none');
+                editBtn.innerHTML = '<i class="bi bi-pencil-fill"></i>';
+                editBtn.classList.remove('btn-success');
+                editBtn.classList.add('btn-outline-primary');
+                editBtn.title = 'Edit scene';
+            }
+        }
+        
+        // Delete scene function
+        function deleteScene(index) {
+            if (!confirm('Are you sure you want to delete this scene?')) {
+                return;
+            }
+            
+            // Remove from scenesPreview data
+            if (scenesPreview && scenesPreview.scenes) {
+                scenesPreview.scenes.splice(index, 1);
+                scenesPreview.total_scenes = scenesPreview.scenes.length;
+                
+                // Renumber remaining scenes
+                scenesPreview.scenes.forEach((scene, i) => {
+                    scene.scene_number = i + 1;
+                });
+                
+                // Update the script textarea with remaining scenes
+                updateScriptFromScenes();
+                
+                // Refresh the preview display WITHOUT showing modal again (skipShow = true)
+                showScriptPreview(scenesPreview, true);
+            }
+        }
+        
+        // Clean up any stuck modal backdrops
+        function cleanupModalBackdrops() {
+            // Remove all modal backdrops
+            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                backdrop.remove();
+            });
+            // Remove modal-open class from body
+            document.body.classList.remove('modal-open');
+            // Reset body styles
+            document.body.style.overflow = '';
+            document.body.style.paddingRight = '';
+        }
+        
+        // Update script textarea from edited scenes
+        function updateScriptFromScenes() {
+            if (scenesPreview && scenesPreview.scenes && scenesPreview.scenes.length > 0) {
+                // Combine all scene texts with double line breaks
+                const updatedScript = scenesPreview.scenes.map(scene => scene.text).join('\n\n');
+                document.getElementById('script').value = updatedScript;
+                updateScriptCount();
+            }
         }
         
         // Create video
