@@ -85,7 +85,16 @@ class VideoCreateRequest(BaseModel):
     @field_validator('resolution')
     @classmethod
     def validate_resolution(cls, v):
-        valid = ["720x1280", "1080x1920", "1440x2560"]
+        valid = [
+            # Portrait (9:16)
+            "720x1280",   # HD Portrait
+            "1080x1920",  # Full HD Portrait
+            "1440x2560",  # 2K Portrait
+            # Landscape (16:9)
+            "1280x720",   # HD Landscape
+            "1920x1080",  # Full HD Landscape
+            "2560x1440"   # 2K Landscape
+        ]
         if v not in valid:
             raise ValueError(f"Resolution must be one of {valid}")
         return v
@@ -210,6 +219,15 @@ class VideoGenerator:
     def get_image_styles(self):
         return self.image_styles
     
+    def _parse_resolution(self, resolution: str) -> tuple:
+        """Parse resolution string to (width, height) tuple"""
+        try:
+            width, height = resolution.split('x')
+            return int(width), int(height)
+        except:
+            # Default to portrait Full HD if parsing fails
+            return 1080, 1920
+    
     async def generate_audio(self, text: str, language: str = "en", voice_id: str = None) -> Dict:
         """Generate audio using Audixa AI TTS API"""
         try:
@@ -312,12 +330,15 @@ class VideoGenerator:
             words = len(str(audio_path).split()) if isinstance(audio_path, str) else 0
             return max(3.0, min(words * 0.15, 10.0))
     
-    async def generate_visual(self, prompt: str, style: str, scene_number: int) -> Dict:
+    async def generate_visual(self, prompt: str, style: str, scene_number: int, resolution: str = "1080x1920") -> Dict:
         """Generate visual with AI providers or fallback to PIL"""
         try:
             visual_id = f"visual_{uuid.uuid4().hex[:8]}"
             visual_file = Config.STORAGE_DIR / "visuals" / f"{visual_id}.png"
             visual_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Parse resolution for dimensions
+            width, height = self._parse_resolution(resolution)
             
             # 0. Try Pexels First if explicitly selected as style
             if style == "pexels" and self.pexels_key:
@@ -412,7 +433,6 @@ class VideoGenerator:
 
             # 6. Last Fallback: PIL Gradient
             logging.info(f"Falling back to PIL generation for scene {scene_number}")
-            width, height = 1080, 1920
             img = self._create_base_image(style, width, height)
             img = self._add_scene_number_to_image(img, scene_number, style)
             img.save(str(visual_file), "PNG", quality=95)
@@ -425,7 +445,7 @@ class VideoGenerator:
             
         except Exception as e:
             logging.error(f"Visual generation failed completely: {e}")
-            return self._create_fallback_image(scene_number, style)
+            return self._create_fallback_image(scene_number, style, resolution)
 
     async def _generate_with_replicate(self, prompt: str, style: str) -> Optional[str]:
         """Generate image using Replicate's Flux model"""
@@ -585,13 +605,13 @@ class VideoGenerator:
             logging.error(f"Pexels API error: {e}")
             return None
     
-    def _create_fallback_image(self, scene_number: int, style: str) -> Dict:
+    def _create_fallback_image(self, scene_number: int, style: str, resolution: str = "1080x1920") -> Dict:
         """Create a fallback image when generation fails"""
         try:
             visual_id = f"fallback_{uuid.uuid4().hex[:8]}"
             visual_file = Config.STORAGE_DIR / "visuals" / f"{visual_id}.png"
             
-            width, height = 1080, 1920
+            width, height = self._parse_resolution(resolution)
             img = Image.new('RGB', (width, height), color='#667eea')
             draw = ImageDraw.Draw(img)
             
@@ -716,7 +736,7 @@ class VideoGenerator:
         
         return img
     
-    async def create_scene_video(self, scene: Dict, audio_info: Dict, visual_info: Dict, style: str) -> Optional[str]:
+    async def create_scene_video(self, scene: Dict, audio_info: Dict, visual_info: Dict, style: str, resolution: str = "1080x1920") -> Optional[str]:
         """Create a single scene video with audio and text overlay"""
         try:
             # Create scenes directory if it doesn't exist
@@ -734,7 +754,8 @@ class VideoGenerator:
                 audio_info["path"], 
                 scene_file, 
                 audio_info["duration"],
-                scene_text
+                scene_text,
+                resolution
             )
             
             if scene_path:
@@ -759,7 +780,7 @@ class VideoGenerator:
                     "-c:a", "aac",
                     "-pix_fmt", "yuv420p",
                     "-t", str(audio_info["duration"]),
-                    "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,"
+                    "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black,"
                            f"drawtext=text='{text_for_ffmpeg}':fontcolor=white:fontsize=42:x=(w-text_w)/2:y=h-text_h-200",
                     "-shortest",
                     "-y",
@@ -777,7 +798,8 @@ class VideoGenerator:
                 visual_info["path"], 
                 audio_info["path"], 
                 scene_file, 
-                audio_info["duration"]
+                audio_info["duration"],
+                resolution
             )
             
         except Exception as e:
@@ -786,7 +808,7 @@ class VideoGenerator:
             
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
-                                           text: str) -> Optional[str]:
+                                           text: str, resolution: str = "1080x1920") -> Optional[str]:
         """Create scene video with simpler text overlay approach"""
         try:
             # Use a very simple approach - create a temporary image with text overlay
@@ -871,7 +893,7 @@ class VideoGenerator:
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
-                "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
                 "-t", str(duration),
                 "-shortest",
                 "-y",
@@ -896,7 +918,7 @@ class VideoGenerator:
             return None
         
     async def _create_simple_scene_video(self, image_path: str, audio_path: str, 
-                                       output_path: Path, duration: float) -> Optional[str]:
+                                       output_path: Path, duration: float, resolution: str = "1080x1920") -> Optional[str]:
         """Create a simple scene video without text overlay"""
         try:
             # Ensure the image exists
@@ -921,7 +943,7 @@ class VideoGenerator:
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
-                "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
                 "-t", str(duration),
                 "-shortest",
                 "-y",
@@ -1105,7 +1127,8 @@ class VideoGenerator:
                 visual_info = await self.generate_visual(
                     scene.get("visual_prompt", scene["text"]),
                     request.image_style,
-                    scene["scene_number"]
+                    scene["scene_number"],
+                    request.resolution
                 )
                 if not visual_info["path"]:
                     logging.error(f"Failed to generate visual for scene {i+1}")
@@ -1113,7 +1136,7 @@ class VideoGenerator:
                 
                 # Create scene video
                 scene_video_path = await self.create_scene_video(
-                    scene, audio_info, visual_info, request.image_style
+                    scene, audio_info, visual_info, request.image_style, request.resolution
                 )
                 
                 if scene_video_path and Path(scene_video_path).exists():

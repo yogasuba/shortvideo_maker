@@ -339,6 +339,37 @@
             font-size: 0.9rem;
             color: #64748b;
         }
+        
+        .orientation-option {
+            cursor: pointer;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+            background: white;
+        }
+
+        .orientation-option:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .orientation-option.selected {
+            border-color: var(--primary);
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .orientation-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            color: var(--primary);
+        }
+
+        .video-preview.landscape {
+            aspect-ratio: 16/9;
+            max-width: 600px;
+        }
     </style>
 </head>
 <body>
@@ -438,6 +469,30 @@
                         <small>4 (Short)</small>
                         <small>8 (Standard)</small>
                         <small>16 (Detailed)</small>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Video Orientation</label>
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <div class="orientation-option selected" onclick="selectOrientation('portrait')" id="orientation-portrait">
+                                <div class="orientation-icon">
+                                    <i class="bi bi-phone"></i>
+                                </div>
+                                <h6 class="mb-1">Portrait</h6>
+                                <small class="text-muted">9:16 (1080x1920)</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="orientation-option" onclick="selectOrientation('landscape')" id="orientation-landscape">
+                                <div class="orientation-icon">
+                                    <i class="bi bi-laptop"></i>
+                                </div>
+                                <h6 class="mb-1">Landscape</h6>
+                                <small class="text-muted">16:9 (1920x1080)</small>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -628,6 +683,8 @@ Artificial intelligence is revolutionizing every industry. From healthcare diagn
         let config = null;
         let scenesPreview = null;
         let previewModalInstance = null; // Store modal instance globally
+        let selectedOrientation = 'portrait';
+        let selectedResolution = '1080x1920';
         
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -899,6 +956,24 @@ Remember, entrepreneurship is a journey of learning. Embrace failures as opportu
             document.getElementById(`style-${styleId}`).classList.add('selected');
         }
         
+// Select orientation
+function selectOrientation(orientation) {
+    selectedOrientation = orientation;
+    
+    // Update resolution based on orientation
+    if (orientation === 'portrait') {
+        selectedResolution = '1080x1920';
+    } else {
+        selectedResolution = '1920x1080';
+    }
+    
+    // Update UI
+    document.querySelectorAll('.orientation-option').forEach(option => {
+        option.classList.remove('selected');
+    });
+    document.getElementById(`orientation-${orientation}`).classList.add('selected');
+}
+
         // Preview voice sample
 // Fix the previewVoiceSample function
 async function previewVoiceSample(voiceId) {
@@ -1187,7 +1262,7 @@ async function previewScriptSplit() {
                 tone: tone,
                 voice: selectedVoice,
                 image_style: selectedStyle,
-                resolution: '1080x1920',
+                resolution: selectedResolution,
                 scenes_count: scenesCount
             };
             
@@ -1286,15 +1361,39 @@ async function previewScriptSplit() {
             // Update title
             document.getElementById('resultTitle').textContent = project.title;
             
-            // Add video player
+            // Update preview container based on orientation
             const videoPlayer = document.getElementById('videoPlayer');
+            if (selectedOrientation === 'landscape') {
+                videoPlayer.classList.add('landscape');
+            } else {
+                videoPlayer.classList.remove('landscape');
+            }
+            
+            // Add video player
             if (currentVideoUrl) {
                 videoPlayer.innerHTML = `
-                    <video controls autoplay class="w-100 h-100">
+                    <video id="finalVideo" controls autoplay class="w-100 h-100">
                         <source src="${API_BASE}${currentVideoUrl}" type="video/mp4">
                         Your browser does not support video playback.
                     </video>
                 `;
+                
+                // Verify actual video resolution for educational purposes
+                const videoEl = document.getElementById('finalVideo');
+                videoEl.onloadedmetadata = function() {
+                    const videoWidth = this.videoWidth;
+                    const videoHeight = this.videoHeight;
+                    
+                    console.log("%c--- VIDEO RESOLUTION VERIFICATION ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
+                    console.log(`Actual Dimensions: ${videoWidth}px x ${videoHeight}px`);
+                    
+                    if (videoWidth > videoHeight) {
+                        console.log("%cOrientation: Landscape (16:9)", "color: #3498db; font-weight: bold;");
+                    } else {
+                        console.log("%cOrientation: Portrait (9:16)", "color: #e67e22; font-weight: bold;");
+                    }
+                    console.log("---------------------------------------");
+                };
             }
         }
         
@@ -1364,6 +1463,8 @@ async function previewScriptSplit() {
             // Reset selections
             selectedVoice = '';
             selectedStyle = '';
+            selectedOrientation = 'portrait';
+            selectedResolution = '1080x1920';
             currentProjectId = '';
             currentVideoUrl = '';
             scenesPreview = null;
@@ -1373,6 +1474,8 @@ async function previewScriptSplit() {
             document.getElementById('sceneCount').textContent = '8';
             document.querySelectorAll('.voice-option.selected').forEach(el => el.classList.remove('selected'));
             document.querySelectorAll('.style-option.selected').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('.orientation-option').forEach(el => el.classList.remove('selected'));
+            document.getElementById('orientation-portrait').classList.add('selected');
             
             // Reset progress/result display
             document.getElementById('progressSection').style.display = 'block';
