@@ -1299,9 +1299,50 @@ async function previewScriptSplit() {
         }
         
         // Download video
-        function downloadVideo() {
-            if (currentVideoUrl) {
-                window.open(`${API_BASE}${currentVideoUrl}`, '_blank');
+        async function downloadVideo() {
+            if (!currentVideoUrl) return;
+            
+            const downloadBtn = document.getElementById('downloadBtn');
+            const originalText = downloadBtn.innerHTML;
+            
+            try {
+                // Show loading state
+                downloadBtn.innerHTML = '<span class="loading-spinner"></span> Downloading...';
+                downloadBtn.disabled = true;
+                
+                // Fetch the video as a blob
+                const response = await fetch(`${API_BASE}${currentVideoUrl}`);
+                if (!response.ok) throw new Error('Download failed');
+                
+                const blob = await response.blob();
+                
+                // Create a temporary URL for the blob
+                const blobUrl = window.URL.createObjectURL(blob);
+                
+                // Create a temporary anchor element
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                
+                // Extract filename from URL or use default with timestamp
+                const filename = currentVideoUrl.split('/').pop() || `video_${Date.now()}.mp4`;
+                link.download = filename;
+                
+                // Trigger download
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Clean up the blob URL
+                window.URL.revokeObjectURL(blobUrl);
+                
+                showAlert('Video downloaded successfully!', 'success');
+            } catch (error) {
+                console.error('Download error:', error);
+                showAlert('Failed to download video. Please try again.', 'error');
+            } finally {
+                // Restore button state
+                downloadBtn.innerHTML = originalText;
+                downloadBtn.disabled = false;
             }
         }
         
