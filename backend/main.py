@@ -28,6 +28,8 @@ import requests
 from dotenv import load_dotenv
 import replicate
 import io
+from elevenlabs.client import ElevenLabs
+from elevenlabs import save
 import base64
 from openai import AsyncOpenAI
 
@@ -79,7 +81,7 @@ class VideoCreateRequest(BaseModel):
     @field_validator('language')
     @classmethod
     def validate_language(cls, v):
-        valid = ["en", "es", "fr", "de", "it", "pt", "hi", "ar", "zh", "ja", "ko"]
+        valid = ["en", "es", "fr", "de", "it", "pt", "hi", "ar", "zh", "ja", "ko", "ta"]
         if v not in valid:
             raise ValueError(f"Language must be one of {valid}")
         return v
@@ -159,8 +161,16 @@ class ScriptProcessor:
         return scenes
 
     @staticmethod
-    async def enrich_scenes_with_voiceover(scenes: List[Dict]) -> List[Dict]:
+    async def enrich_scenes_with_voiceover(scenes: List[Dict], language: str = "en") -> List[Dict]:
         """Generate voice-overs for scenes using OpenAI/OpenRouter with fallback"""
+        
+        # Language mapping for better AI understanding
+        lang_map = {
+            "en": "English", "es": "Spanish", "fr": "French", "de": "German",
+            "it": "Italian", "pt": "Portuguese", "hi": "Hindi", "ar": "Arabic",
+            "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "ta": "Tamil"
+        }
+        lang_name = lang_map.get(language, "English")
         
         async def generate_with_client(client, model, system_prompt, user_prompt) -> Optional[List[str]]:
             try:
@@ -199,21 +209,27 @@ class ScriptProcessor:
         
         scenes_block = "\n".join(scenes_data)
         
-        system_prompt = """You are a professional video script writer. Generate a voice-over narration for each scene.
+        system_prompt = f"""You are a professional video script writer. Generate a voice-over narration for each scene.
 
 CRITICAL INSTRUCTIONS:
-1. The Voice-Over MUST BE COMPLETELY DIFFERENT from the Scene Description.
+1. The Voice-Over MUST BE engaging and natural narration.
+   - If the input text is in English, generate a creative narration in {lang_name} that is DIFFERENT from the visual description.
+   - If the input text is ALREADY in {lang_name}, preserve its core meaning while ensuring it is polished and natural for speech.
    - Scene Description = What we SEE.
    - Voice Over = What we HEAR (narration).
-   - Example: 
+   - Example (English input): 
      Scene: "A busy playground with kids running."
      Voice Over: "Laughter fills the air as childhood memories are made." 
-     (NOT "A busy playground with kids running")
 
 2. Length must match duration (approx 2.5 words per second).
-3. Output ONLY a raw JSON array of strings. No markdown, no code blocks."""
+3. The Voice-Over MUST BE COMPLETELY and ONLY in {lang_name}.
+4. Output ONLY a raw JSON array of strings in {lang_name}. No markdown, no code blocks."""
 
-        user_prompt = f"""Generate voice-overs for these scenes. REMEMBER: Voice-over text must be DIFFERENT from the scene description text.\n\n{scenes_block}"""
+        user_prompt = f"""Generate {lang_name} voice-overs for these scenes. 
+REMEMBER: If input is English, narration must be different and in {lang_name}. If input is {lang_name}, preserve meaning but make it natural.
+MUST output ONLY the JSON array.
+
+{scenes_block}"""
 
         # Try providers in order
         voice_overs = None
@@ -221,44 +237,48 @@ CRITICAL INSTRUCTIONS:
         # Try providers in order
         voice_overs = None
         
-        # 1. Try OpenRouter
-        openrouter_key = os.getenv("OPENROUTER_API_KEY")
-        if openrouter_key:
+        # 1. Try OpenAI Direct (Higher reliability for these keys)
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key and (openai_key.startswith("sk-") or openai_key.startswith("sk-proj-")):
             try:
-                logging.info("DEBUG: Attempting OpenRouter...")
-                client = AsyncOpenAI(
-                    api_key=openrouter_key,
-                    base_url="https://openrouter.ai/api/v1"
-                )
-                # Try a few reliable FREE models on OpenRouter
-                models = [
-                    "google/gemini-2.0-flash-exp:free",
-                    "google/gemini-2.0-flash-thinking-exp:free",
-                    "mistralai/pixtral-12b:free",
-                    "qwen/qwen-2-7b-instruct:free",
-                    "openai/gpt-3.5-turbo"
-                ]
-                
-                for model in models:
+                logging.info("DEBUG: Attempting OpenAI Direct...")
+                client = AsyncOpenAI(api_key=openai_key)
+                # Use GPT-4o if possible, fallback to gpt-3.5-turbo
+                for model in ["gpt-4o", "gpt-3.5-turbo"]:
                     voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
                     if voice_overs:
-                        logging.info(f"✓ Success with OpenRouter model: {model}")
+                        logging.info(f"✓ Success with OpenAI Direct model: {model}")
                         break
             except Exception as e:
-                logging.error(f"OpenRouter setup failed: {e}")
+                logging.error(f"OpenAI Direct setup failed: {e}")
 
-        # 2. Try OpenAI Direct (if OpenRouter failed or key missing)
+        # 2. Try OpenRouter (if OpenAI failed or key missing)
         if not voice_overs:
-            openai_key = os.getenv("OPENAI_API_KEY")
-            if openai_key:
+            openrouter_key = os.getenv("OPENROUTER_API_KEY")
+            # Only try OpenRouter if it's NOT an OpenAI key used mistakenly as OpenRouter key
+            if openrouter_key and not (openrouter_key.startswith("sk-proj-") or openrouter_key.startswith("sk-")):
                 try:
-                    logging.info("DEBUG: Fallback to OpenAI Direct...")
-                    client = AsyncOpenAI(api_key=openai_key)
-                    voice_overs = await generate_with_client(client, "gpt-3.5-turbo", system_prompt, user_prompt)
-                    if voice_overs:
-                        logging.info("✓ Success with OpenAI Direct")
+                    logging.info("DEBUG: Attempting OpenRouter...")
+                    client = AsyncOpenAI(
+                        api_key=openrouter_key,
+                        base_url="https://openrouter.ai/api/v1"
+                    )
+                    # Try a few reliable FREE models on OpenRouter
+                    models = [
+                        "google/gemini-2.0-flash-exp:free",
+                        "google/gemini-2.0-flash-thinking-exp:free",
+                        "mistralai/pixtral-12b:free",
+                        "qwen/qwen-2-7b-instruct:free",
+                        "openai/gpt-3.5-turbo"
+                    ]
+                    
+                    for model in models:
+                        voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
+                        if voice_overs:
+                            logging.info(f"✓ Success with OpenRouter model: {model}")
+                            break
                 except Exception as e:
-                    logging.error(f"OpenAI Direct setup failed: {e}")
+                    logging.error(f"OpenRouter setup failed: {e}")
 
         # Apply results or fallback
         if voice_overs:
@@ -273,8 +293,8 @@ CRITICAL INSTRUCTIONS:
             logging.warning("ALL AI GENERATION FAILED. Falling back to using scene description as voice-over.")
             for scene in scenes:
                 scene["voice_over"] = scene["text"]
-        
         return scenes
+
 
 # ========== VIDEO GENERATOR ==========
 class VideoGenerator:
@@ -300,26 +320,30 @@ class VideoGenerator:
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
         self.pexels_key = os.getenv("PEXELS_API_KEY")
-        self.audixa_key = os.getenv("AUDIXA_API_KEY")
+        self.elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
         
         print(f"DEBUG: HuggingFace Token: {'***' + self.hf_token[-4:] if self.hf_token else 'NOT FOUND'}")
         print(f"DEBUG: OpenRouter Key: {'***' + self.openrouter_key[-4:] if self.openrouter_key else 'NOT FOUND'}")
         print(f"DEBUG: Pexels API Key: {'***' + self.pexels_key[-4:] if self.pexels_key else 'NOT FOUND'}")
-        print(f"DEBUG: Audixa API Key: {'***' + self.audixa_key[-4:] if self.audixa_key else 'NOT FOUND'}")
+        print(f"DEBUG: ElevenLabs API Key: {'***' + self.elevenlabs_key[-4:] if self.elevenlabs_key else 'NOT FOUND'}")
+        
+        if self.elevenlabs_key:
+            self.elevenlabs_client = ElevenLabs(api_key=self.elevenlabs_key)
+        else:
+            self.elevenlabs_client = None
     
     def _initialize_voices(self):
-        # Using only FREE Audixa voices
+        # Using popular FREE/Premade ElevenLabs voices
         return [
-            {"id": "am_ethan", "name": "Ethan (Male)", "gender": "male", "accent": "American"},
-            {"id": "af_lily", "name": "Lily (Female)", "gender": "female", "accent": "American"},
-            {"id": "af_zoey", "name": "Zoey (Female)", "gender": "female", "accent": "American"},
-            {"id": "af_aria", "name": "Aria (Female)", "gender": "female", "accent": "American"},
-            {"id": "am_eric", "name": "Eric (Male)", "gender": "male", "accent": "American"},
-            {"id": "bf_alice", "name": "Alice (Female)", "gender": "female", "accent": "British"},
-            {"id": "bf_chloe", "name": "Chloe (Female)", "gender": "female", "accent": "British"},
-            {"id": "bm_harry", "name": "Harry (Male)", "gender": "male", "accent": "British"},
-            {"id": "bm_oliver", "name": "Oliver (Male)", "gender": "male", "accent": "British"},
-            {"id": "bm_george", "name": "George (Male)", "gender": "male", "accent": "British"}
+            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Female)", "gender": "female", "accent": "American"},
+            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Male)", "gender": "male", "accent": "American"},
+            {"id": "AZnzlk1XhxPqc80f0nS1", "name": "Nicole (Female)", "gender": "female", "accent": "American"},
+            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Female)", "gender": "female", "accent": "American"},
+            {"id": "Lcf7939Ju8S8p3vKzIuK", "name": "Antoni (Male)", "gender": "male", "accent": "American"},
+            {"id": "MF3mGyEYCl7XYW7Lec9M", "name": "Elli (Female)", "gender": "female", "accent": "American"},
+            {"id": "ThT5KcBe7VKqW6E5mxY1", "name": "Josh (Male)", "gender": "male", "accent": "American"},
+            {"id": "VR6Aewr9E3od7id8Zb6m", "name": "Arnold (Male)", "gender": "male", "accent": "American"},
+            {"id": "flq6f7yk4E4f6f6f6f6f", "name": "Daniel (Male)", "gender": "male", "accent": "British"}
         ]
     
     def _initialize_image_styles(self):
@@ -349,86 +373,46 @@ class VideoGenerator:
             return 1080, 1920
     
     async def generate_audio(self, text: str, language: str = "en", voice_id: str = None) -> Dict:
-        """Generate audio using Audixa AI TTS API"""
+        """Generate audio using ElevenLabs TTS API"""
         try:
-            if not self.audixa_key:
-                logging.error("Audixa API key not found. Please provide AUDIXA_API_KEY in .env.")
-                # Fallback to a simple 5s duration placeholder if key missing
+            if not self.elevenlabs_client:
+                logging.error("ElevenLabs client not initialized. Please provide ELEVENLABS_API_KEY in .env.")
                 return {"url": "", "duration": 5.0, "path": ""}
 
             audio_id = f"audio_{uuid.uuid4().hex[:8]}"
             audio_file = Config.STORAGE_DIR / "audio" / f"{audio_id}.mp3"
             audio_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Step 1: Submit TTS request
-            submit_url = "https://api.audixa.ai/v2/tts"
-            headers = {
-                "x-api-key": self.audixa_key,
-                "Content-Type": "application/json"
-            }
+            # Find the correct voice id or default to Rachel
+            voice = voice_id if voice_id else "21m00Tcm4TlvDq8ikWAM"
             
-            # Find the correct voice id or default to Ethan
-            voice = voice_id if voice_id else "am_ethan"
+            logging.info(f"Generating ElevenLabs audio for voice {voice}...")
             
-            payload = {
-                "text": text,
-                "voice": voice,
-                "model": "base",
-                "speed": 1.0
-            }
+            # Call ElevenLabs API
+            def _generate():
+                return self.elevenlabs_client.text_to_speech.convert(
+                    text=text,
+                    voice_id=voice,
+                    model_id="eleven_multilingual_v2"
+                )
 
-            logging.info(f"Submitting TTS request to Audixa for voice {voice}...")
-            response = requests.post(submit_url, headers=headers, json=payload, timeout=30)
+            audio_stream = await asyncio.get_event_loop().run_in_executor(None, _generate)
             
-            if response.status_code not in [200, 201]:
-                logging.error(f"Audixa TTS submission failed: {response.status_code} - {response.text}")
-                return {"url": "", "duration": 5.0, "path": ""}
-
-            generation_id = response.json().get("generation_id")
-            if not generation_id:
-                logging.error("No generation_id returned from Audixa")
-                return {"url": "", "duration": 5.0, "path": ""}
-
-            # Step 2: Poll status
-            status_url = f"https://api.audixa.ai/v2/status?generation_id={generation_id}"
-            max_retries = 120  # increased to 120 seconds
-            retry_count = 0
+            # Save the result
+            save(audio_stream, str(audio_file))
             
-            logging.info(f"Polling Audixa status for generation_id: {generation_id}")
-            while retry_count < max_retries:
-                status_response = requests.get(status_url, headers=headers, timeout=10)
-                if status_response.status_code == 200:
-                    status_data = status_response.json()
-                    status = status_data.get("status")
-                    
-                    if status == "Completed":
-                        audio_url = status_data.get("url")
-                        if audio_url:
-                            # Step 3: Download audio file
-                            logging.info(f"Audixa generation completed. Downloading from {audio_url}...")
-                            audio_content = requests.get(audio_url).content
-                            with open(audio_file, "wb") as f:
-                                f.write(audio_content)
-                            
-                            # Get actual duration
-                            duration = self._get_audio_duration(audio_file)
-                            return {
-                                "url": f"/storage/audio/{audio_id}.mp3",
-                                "duration": duration,
-                                "path": str(audio_file)
-                            }
-                    elif status == "Failed":
-                        logging.error(f"Audixa generation failed for {generation_id}")
-                        break
-                
-                retry_count += 1
-                await asyncio.sleep(1)
-
-            logging.error(f"Audixa TTS timed out or failed for {generation_id}")
+            if audio_file.exists():
+                duration = self._get_audio_duration(audio_file)
+                return {
+                    "url": f"/storage/audio/{audio_id}.mp3",
+                    "duration": duration,
+                    "path": str(audio_file)
+                }
+            
             return {"url": "", "duration": 5.0, "path": ""}
 
         except Exception as e:
-            logging.error(f"Audixa audio generation error: {e}")
+            logging.error(f"ElevenLabs audio generation error: {e}")
             return {"url": "", "duration": 5.0, "path": ""}
     
     def _get_audio_duration(self, audio_path: Path) -> float:
@@ -867,7 +851,7 @@ class VideoGenerator:
         
         return img
     
-    async def create_scene_video(self, scene: Dict, audio_info: Dict, visual_info: Dict, style: str, resolution: str = "1080x1920") -> Optional[str]:
+    async def create_scene_video(self, scene: Dict, audio_info: Dict, visual_info: Dict, style: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
         """Create a single scene video with audio and text overlay"""
         try:
             # Create scenes directory if it doesn't exist
@@ -878,16 +862,17 @@ class VideoGenerator:
             
             # Priority: Use PIL-based text overlay (Method 2) first, as it's more robust on Windows
             logging.info(f"Creating scene video for scene {scene['scene_number']}...")
-            # Subtitle should be narration (voice_over), fallback to text (description) if narration is identical or missing
-            scene_text = scene.get('voice_over', scene.get('text', ''))
+            # Subtitle should be narration.
+            subtitle_text = scene.get('voice_over', scene.get('text', ''))
             
             scene_path = await self._create_scene_with_simple_text(
                 visual_info["path"], 
                 audio_info["path"], 
                 scene_file, 
                 audio_info["duration"],
-                scene_text,
-                resolution
+                subtitle_text,
+                resolution,
+                language
             )
             
             if scene_path:
@@ -897,7 +882,7 @@ class VideoGenerator:
             logging.warning("PIL overlay failed or not returned path, trying FFmpeg drawtext...")
             
             # Prepare text for FFmpeg - escape special characters
-            text_for_ffmpeg = scene_text.replace("'", "'\\\\\\''").replace(':', '\\:').replace(',', '\\,')
+            text_for_ffmpeg = subtitle_text.replace("'", "'\\\\\\''").replace(':', '\\:').replace(',', '\\,')
             
             if len(text_for_ffmpeg) > 100:
                 text_for_ffmpeg = text_for_ffmpeg[:97] + "..."
@@ -940,7 +925,7 @@ class VideoGenerator:
             
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
-                                           text: str, resolution: str = "1080x1920") -> Optional[str]:
+                                           text: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
         """Create scene video with dynamic text sizing and wrapping"""
         try:
             temp_image = Config.STORAGE_DIR / "temp" / f"temp_text_{uuid.uuid4().hex[:8]}.png"
@@ -956,7 +941,12 @@ class VideoGenerator:
             # Font selection
             try:
                 if os.name == 'nt':  # Windows
-                    font_path = "C:/Windows/Fonts/arial.ttf"
+                    font_paths = []
+                    if language == "ta":
+                        font_paths.extend(["C:/Windows/Fonts/Nirmala.ttc", "C:/Windows/Fonts/Latha.ttf", "C:/Windows/Fonts/nirmala.ttc"])
+                    font_paths.append("C:/Windows/Fonts/arial.ttf")
+                    
+                    font_path = next((p for p in font_paths if os.path.exists(p)), "C:/Windows/Fonts/arial.ttf")
                 else:  # Linux/Mac
                     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
                 
@@ -974,7 +964,7 @@ class VideoGenerator:
             fitting = True
             lines = []
             
-            while fitting and font_size > 18:
+            while fitting and font_size > 12: # Lowered minimum font size
                 lines = []
                 words = text.split()
                 current_line = []
@@ -996,8 +986,10 @@ class VideoGenerator:
                     lines.append(' '.join(current_line))
                 
                 # Check height
-                line_height = font_size + 10
-                total_height = len(lines) * line_height
+                # Calculate actual height of these lines
+                temp_bbox = draw.textbbox((0, 0), "Ayg", font=font)
+                line_height_from_font = (temp_bbox[3] - temp_bbox[1]) + 15
+                total_height = len(lines) * line_height_from_font
                 
                 if total_height > max_height:
                     font_size -= 4
@@ -1009,21 +1001,33 @@ class VideoGenerator:
                     fitting = False
 
             # Draw text with background
-            line_height = font_size + 10
+            # Calculate actual line height from font
+            bbox_sample = draw.textbbox((0, 0), "Ayg", font=font)
+            line_height = (bbox_sample[3] - bbox_sample[1]) + 15 # Add some spacing
             total_height = len(lines) * line_height
-            y_start = img.height - total_height - 120 # Padding from bottom
             
-            # Draw semi-transparent background box
-            padding = 20
+            # Position at the bottom (approx 15% from bottom)
+            y_start = img.height - total_height - (img.height * 0.15)
+            
+            # Draw semi-transparent background box per line
+            padding = 15
             box_fill = (0, 0, 0, 160)
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
             overlay_draw = ImageDraw.Draw(overlay)
             
-            overlay_draw.rectangle(
-                [(40, y_start - padding), 
-                 (img.width - 40, y_start + total_height + padding)],
-                fill=box_fill
-            )
+            for i, line in enumerate(lines):
+                line_bbox = overlay_draw.textbbox((0, 0), line, font=font)
+                line_w = line_bbox[2] - line_bbox[0]
+                line_h = line_bbox[3] - line_bbox[1]
+                lx = (img.width - line_w) // 2
+                ly = y_start + (i * line_height)
+                
+                # Draw box for this specific line
+                overlay_draw.rectangle(
+                    [(lx - padding, ly - 5), 
+                     (lx + line_w + padding, ly + line_h + 10)],
+                    fill=box_fill
+                )
             
             img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
             draw = ImageDraw.Draw(img)
@@ -1266,7 +1270,10 @@ class VideoGenerator:
                 logging.info(f"Using {len(scenes)} provided scenes for project {project_id}")
             else:
                 scenes = self.script_processor.split_script(request.script, request.scenes_count)
+                # Enrich with voice-overs matching the language
+                scenes = await self.script_processor.enrich_scenes_with_voiceover(scenes, request.language)
             project["scenes"] = scenes
+            
             
             # Generate assets for each scene
             scene_videos = []
@@ -1300,7 +1307,7 @@ class VideoGenerator:
                 
                 # Create scene video
                 scene_video_path = await self.create_scene_video(
-                    scene, audio_info, visual_info, request.image_style, request.resolution
+                    scene, audio_info, visual_info, request.image_style, request.resolution, request.language
                 )
                 
                 if scene_video_path and Path(scene_video_path).exists():
@@ -1516,7 +1523,7 @@ async def get_config():
         "data": {
             "voices": video_gen.get_voices(),
             "image_styles": video_gen.get_image_styles(),
-            "languages": ["en", "es", "fr", "de", "it", "pt", "hi", "ar", "zh", "ja", "ko"],
+            "languages": ["en", "es", "fr", "de", "it", "pt", "hi", "ar", "zh", "ja", "ko", "ta"],
             "tones": ["neutral", "professional", "casual", "humorous", "educational", "motivational"],
             "resolutions": ["720x1280", "1080x1920", "1440x2560"],
             "max_scenes": 16,
@@ -1610,12 +1617,13 @@ async def preview_script_split(request: Dict[str, Any]):
     try:
         script = request.get("script", "")
         scenes_count = request.get("scenes_count", 8)
+        language = request.get("language", "en")
         
         processor = ScriptProcessor()
         scenes = processor.split_script(script, scenes_count)
         
         # Enrich with voice-overs
-        scenes = await processor.enrich_scenes_with_voiceover(scenes)
+        scenes = await processor.enrich_scenes_with_voiceover(scenes, language)
         
         return {
             "success": True,
@@ -1632,7 +1640,8 @@ async def preview_script_split(request: Dict[str, Any]):
 @app.post("/api/scripts/preview/form")
 async def preview_script_split_form(
     script: str = Form(...),
-    scenes_count: int = Form(8)
+    scenes_count: int = Form(8),
+    language: str = Form("en")
 ):
     """Preview how script will be split into scenes (Form version)"""
     try:
@@ -1640,7 +1649,7 @@ async def preview_script_split_form(
         scenes = processor.split_script(script, scenes_count)
         
         # Enrich with voice-overs
-        scenes = await processor.enrich_scenes_with_voiceover(scenes)
+        scenes = await processor.enrich_scenes_with_voiceover(scenes, language)
         
         return {
             "success": True,

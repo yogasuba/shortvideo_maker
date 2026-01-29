@@ -444,6 +444,8 @@
                             <option value="de">German</option>
                             <option value="it">Italian</option>
                             <option value="pt">Portuguese</option>
+                            <option value="hi">Hindi</option>
+                            <option value="ta">Tamil</option>
                         </select>
                     </div>
                     <div class="col-md-6 mb-3">
@@ -698,11 +700,40 @@ Artificial intelligence is revolutionizing every industry. From healthcare diagn
                 const data = await response.json();
                 if (data.success) {
                     config = data.data;
+                    loadLanguages();
                     loadVoices();
                     loadStyles();
                 }
             } catch (error) {
                 showAlert('Failed to load configuration. Make sure the backend server is running on port 8001.', 'error');
+            }
+        }
+        
+        // Populate languages from config
+        function loadLanguages() {
+            if (!config || !config.languages) return;
+            
+            const dropdown = document.getElementById('language');
+            const currentVal = dropdown.value; // Store current selection
+            
+            dropdown.innerHTML = '';
+            
+            const langNames = {
+                'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+                'it': 'Italian', 'pt': 'Portuguese', 'hi': 'Hindi', 'ar': 'Arabic',
+                'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ta': 'Tamil'
+            };
+            
+            config.languages.forEach(langCode => {
+                const option = document.createElement('option');
+                option.value = langCode;
+                option.textContent = langNames[langCode] || langCode.toUpperCase();
+                dropdown.appendChild(option);
+            });
+            
+            // Restore selection if it still exists
+            if ([...dropdown.options].some(opt => opt.value === currentVal)) {
+                dropdown.value = currentVal;
             }
         }
         
@@ -1052,7 +1083,8 @@ async function previewScriptSplit() {
             },
             body: JSON.stringify({
                 script: script,
-                scenes_count: scenesCount
+                scenes_count: scenesCount,
+                language: document.getElementById('language').value
             })
         });
         
