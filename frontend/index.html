@@ -543,13 +543,11 @@ Artificial intelligence is revolutionizing every industry. From healthcare diagn
                     <div class="character-count" id="scriptCount">0/5000</div>
                 </div>
                 
-                <div class="d-flex justify-content-between align-items-center mt-3">
-                    <button class="btn btn-outline-primary" onclick="previewScriptSplit()" id="previewBtn">
-                        <i class="bi bi-eye me-2"></i> Preview Scene Split
+                    <button class="btn btn-primary-custom w-100 py-3" onclick="previewScriptSplit()" id="previewBtn">
+                        <i class="bi bi-eye me-2"></i> Preview Split Scene
                     </button>
-                    <div>
-                        <button class="btn btn-outline-secondary me-2" onclick="prevStep(1)">Previous</button>
-                        <button class="btn btn-primary-custom" onclick="nextStep(3)">Next: Choose Voice</button>
+                    <div class="mt-3 text-center">
+                        <button class="btn btn-link text-muted text-decoration-none" onclick="prevStep(1)">Back to Video Details</button>
                     </div>
                 </div>
             </div>
@@ -1090,18 +1088,34 @@ async function previewScriptSplit() {
         btn.disabled = false;
     }
 }        
-        // Show script preview modal
-        function showScriptPreview(data, skipShow = false) {
+
+// Proceed to voice selection from preview
+function proceedToVoiceSelection() {
+    // hide modal
+    if (previewModalInstance) {
+        previewModalInstance.hide();
+    }
+    // go to next step
+    nextStep(3);
+}
+
+// Show script preview modal
+function showScriptPreview(data, skipShow = false) {
             const modalElement = document.getElementById('previewModal');
             const content = document.getElementById('previewContent');
             
             let html = `
-                <div class="mb-4">
-                    <p class="text-muted">Your script will be split into <strong>${data.total_scenes} scenes</strong>.</p>
-                    <div class="alert alert-info">
-                        <i class="bi bi-info-circle me-2"></i>
-                        Each scene will become a separate visual with its own audio narration.
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <p class="text-muted mb-0">Your script will be split into <strong>${data.total_scenes} scenes</strong>.</p>
                     </div>
+                    <button class="btn btn-primary-custom" onclick="proceedToVoiceSelection()">
+                        Choose Voice <i class="bi bi-arrow-right ms-2"></i>
+                    </button>
+                </div>
+                <div class="alert alert-info mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Each scene will become a separate visual with its own audio narration.
                 </div>
                 <h6 class="fw-bold mb-3">Scene Breakdown:</h6>
             `;
@@ -1164,6 +1178,22 @@ async function previewScriptSplit() {
             });
             
             content.innerHTML = html;
+            
+            // Add a footer with the proceed button as well for convenience
+            const modalDialog = modalElement.querySelector('.modal-content');
+            let footer = modalDialog.querySelector('.modal-footer');
+            if (!footer) {
+                footer = document.createElement('div');
+                footer.className = 'modal-footer border-top-0';
+                modalDialog.appendChild(footer);
+            }
+            
+            footer.innerHTML = `
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary-custom" onclick="proceedToVoiceSelection()">
+                    Choose Voice <i class="bi bi-arrow-right ms-2"></i>
+                </button>
+            `;
             
             // Only show modal if not skipping (i.e., first time or explicit show)
             if (!skipShow) {

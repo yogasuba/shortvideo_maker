@@ -147,6 +147,15 @@ Get your API keys from:
 
 This project is for educational and personal use.
 
+## Image Storage Location
+
+**Where are uploaded images stored?**
+All user-uploaded images and generated visuals are stored in the backend under:
+`backend/storage/visuals/`
+
+- **Uploads**: User uploads are saved here with a `custom_` prefix (e.g., `custom_a1b2c3d4.png`).
+- **Generations**: AI-generated images are also saved here.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
