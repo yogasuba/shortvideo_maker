@@ -1127,8 +1127,19 @@ function showScriptPreview(data, skipShow = false) {
                             <div class="d-flex align-items-start flex-grow-1">
                                 <div class="scene-number">${scene.scene_number}</div>
                                 <div class="scene-text-container flex-grow-1">
-                                    <div class="scene-text" id="scene-text-${index}">${scene.text}</div>
-                                    <textarea class="form-control scene-text-edit d-none" id="scene-edit-${index}" rows="3">${scene.text}</textarea>
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted small fw-bold mb-1">VISUAL PROMPT (SCENE DESCRIPTION)</label>
+                                        <div class="scene-text p-2 bg-light rounded" id="scene-text-${index}">${scene.text}</div>
+                                        <textarea class="form-control scene-text-edit d-none" id="scene-edit-${index}" rows="3">${scene.text}</textarea>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted small fw-bold mb-1">VOICE OVER (NARRATION)</label>
+                                        <div class="scene-text p-2 bg-light rounded border-start border-3 border-info" id="scene-voice-${index}">
+                                            ${scene.voice_over || scene.text}
+                                        </div>
+                                        <textarea class="form-control scene-text-edit d-none" id="scene-voice-edit-${index}" rows="3">${scene.voice_over || scene.text}</textarea>
+                                    </div>
                                     
                                     <!-- Image Upload Section -->
                                     <div class="mt-3 pt-3 border-top">
@@ -1212,12 +1223,20 @@ function showScriptPreview(data, skipShow = false) {
         function editScene(index) {
             const textDiv = document.getElementById(`scene-text-${index}`);
             const editTextarea = document.getElementById(`scene-edit-${index}`);
+            
+            const voiceDiv = document.getElementById(`scene-voice-${index}`);
+            const voiceTextarea = document.getElementById(`scene-voice-edit-${index}`);
+            
             const editBtn = document.getElementById(`edit-btn-${index}`);
             
             if (editTextarea.classList.contains('d-none')) {
                 // Switch to edit mode
                 textDiv.classList.add('d-none');
                 editTextarea.classList.remove('d-none');
+                
+                voiceDiv.classList.add('d-none');
+                voiceTextarea.classList.remove('d-none');
+                
                 editTextarea.focus();
                 editBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
                 editBtn.classList.remove('btn-outline-primary');
@@ -1226,20 +1245,25 @@ function showScriptPreview(data, skipShow = false) {
             } else {
                 // Save changes
                 const newText = editTextarea.value.trim();
+                const newVoice = voiceTextarea.value.trim();
+                
                 if (newText) {
                     textDiv.textContent = newText;
+                    voiceDiv.textContent = newVoice || newText;
+                    
                     // Update the scenesPreview data
                     if (scenesPreview && scenesPreview.scenes[index]) {
                         scenesPreview.scenes[index].text = newText;
-                        // Also update the visual prompt to match the new text
                         scenesPreview.scenes[index].visual_prompt = newText;
+                        scenesPreview.scenes[index].voice_over = newVoice || newText;
                         
                         // Update the preview text below the scene
                         const previewElement = document.getElementById(`scene-preview-${index}`);
                         if (previewElement) {
                             previewElement.innerHTML = `
                                 <i class="bi bi-clock me-1"></i> ${scenesPreview.scenes[index].duration}s • 
-                                <i class="bi bi-image me-1 ms-2"></i> Scene ${scenesPreview.scenes[index].scene_number}: ${newText.substring(0, 60)}...
+                                <i class="bi bi-image me-1 ms-2"></i> Scene ${scenesPreview.scenes[index].scene_number}: ${newText.substring(0, 40)}...
+                                <br><i class="bi bi-mic me-1 ms-2"></i> VO: ${newVoice.substring(0, 40)}...
                             `;
                         }
                         
@@ -1249,6 +1273,10 @@ function showScriptPreview(data, skipShow = false) {
                 }
                 textDiv.classList.remove('d-none');
                 editTextarea.classList.add('d-none');
+                
+                voiceDiv.classList.remove('d-none');
+                voiceTextarea.classList.add('d-none');
+                
                 editBtn.innerHTML = '<i class="bi bi-pencil-fill"></i>';
                 editBtn.classList.remove('btn-success');
                 editBtn.classList.add('btn-outline-primary');

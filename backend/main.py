@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 import replicate
 import io
 import base64
+from openai import AsyncOpenAI
 
 # Load environment variables
 env_path = Path(__file__).parent / ".env"
@@ -154,6 +155,124 @@ class ScriptProcessor:
             last_scene = scenes[-1].copy()
             last_scene["scene_number"] = len(scenes) + 1
             scenes.append(last_scene)
+        
+        return scenes
+
+    @staticmethod
+    async def enrich_scenes_with_voiceover(scenes: List[Dict]) -> List[Dict]:
+        """Generate voice-overs for scenes using OpenAI/OpenRouter with fallback"""
+        
+        async def generate_with_client(client, model, system_prompt, user_prompt) -> Optional[List[str]]:
+            try:
+                logging.info(f"DEBUG: Sending request to model {model}...")
+                response = await client.chat.completions.create(
+                    model=model, 
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.7,
+                )
+                content = response.choices[0].message.content.strip()
+                logging.info(f"DEBUG: AI Raw Response: {content[:100]}...")
+                
+                # Clean up potential markdown formatting
+                if "```json" in content:
+                    content = content.replace("```json", "").replace("```", "")
+                elif "```" in content:
+                    content = content.replace("```", "")
+                
+                voice_overs = json.loads(content)
+                if isinstance(voice_overs, list) and len(voice_overs) == len(scenes):
+                    return voice_overs
+                else:
+                    logging.error(f"Invalid format/count. Expected {len(scenes)}, got {len(voice_overs) if isinstance(voice_overs, list) else 'type mismatch'}")
+                    return None
+            except Exception as e:
+                logging.error(f"Generation failed with model {model}: {e}")
+                return None
+
+        # Prepare prompts
+        scenes_data = []
+        for scene in scenes:
+            scenes_data.append(f"Scene {scene['scene_number']} (Duration: {scene['duration']}s): {scene['text']}")
+        
+        scenes_block = "\n".join(scenes_data)
+        
+        system_prompt = """You are a professional video script writer. Generate a voice-over narration for each scene.
+
+CRITICAL INSTRUCTIONS:
+1. The Voice-Over MUST BE COMPLETELY DIFFERENT from the Scene Description.
+   - Scene Description = What we SEE.
+   - Voice Over = What we HEAR (narration).
+   - Example: 
+     Scene: "A busy playground with kids running."
+     Voice Over: "Laughter fills the air as childhood memories are made." 
+     (NOT "A busy playground with kids running")
+
+2. Length must match duration (approx 2.5 words per second).
+3. Output ONLY a raw JSON array of strings. No markdown, no code blocks."""
+
+        user_prompt = f"""Generate voice-overs for these scenes. REMEMBER: Voice-over text must be DIFFERENT from the scene description text.\n\n{scenes_block}"""
+
+        # Try providers in order
+        voice_overs = None
+        
+        # Try providers in order
+        voice_overs = None
+        
+        # 1. Try OpenRouter
+        openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        if openrouter_key:
+            try:
+                logging.info("DEBUG: Attempting OpenRouter...")
+                client = AsyncOpenAI(
+                    api_key=openrouter_key,
+                    base_url="https://openrouter.ai/api/v1"
+                )
+                # Try a few reliable FREE models on OpenRouter
+                models = [
+                    "google/gemini-2.0-flash-exp:free",
+                    "google/gemini-2.0-flash-thinking-exp:free",
+                    "mistralai/pixtral-12b:free",
+                    "qwen/qwen-2-7b-instruct:free",
+                    "openai/gpt-3.5-turbo"
+                ]
+                
+                for model in models:
+                    voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
+                    if voice_overs:
+                        logging.info(f"✓ Success with OpenRouter model: {model}")
+                        break
+            except Exception as e:
+                logging.error(f"OpenRouter setup failed: {e}")
+
+        # 2. Try OpenAI Direct (if OpenRouter failed or key missing)
+        if not voice_overs:
+            openai_key = os.getenv("OPENAI_API_KEY")
+            if openai_key:
+                try:
+                    logging.info("DEBUG: Fallback to OpenAI Direct...")
+                    client = AsyncOpenAI(api_key=openai_key)
+                    voice_overs = await generate_with_client(client, "gpt-3.5-turbo", system_prompt, user_prompt)
+                    if voice_overs:
+                        logging.info("✓ Success with OpenAI Direct")
+                except Exception as e:
+                    logging.error(f"OpenAI Direct setup failed: {e}")
+
+        # Apply results or fallback
+        if voice_overs:
+            logging.info("DEBUG: Applying generated voice-overs.")
+            for i, scene in enumerate(scenes):
+                # Safety check for duplicates
+                if voice_overs[i].strip().lower() == scene["text"].strip().lower():
+                    logging.warning(f"Scene {i+1} voice-over identical to text. AI ignored instructions.")
+                
+                scene["voice_over"] = voice_overs[i]
+        else:
+            logging.warning("ALL AI GENERATION FAILED. Falling back to using scene description as voice-over.")
+            for scene in scenes:
+                scene["voice_over"] = scene["text"]
         
         return scenes
 
@@ -759,7 +878,8 @@ class VideoGenerator:
             
             # Priority: Use PIL-based text overlay (Method 2) first, as it's more robust on Windows
             logging.info(f"Creating scene video for scene {scene['scene_number']}...")
-            scene_text = scene.get('text', '')
+            # Subtitle should be narration (voice_over), fallback to text (description) if narration is identical or missing
+            scene_text = scene.get('voice_over', scene.get('text', ''))
             
             scene_path = await self._create_scene_with_simple_text(
                 visual_info["path"], 
@@ -821,74 +941,98 @@ class VideoGenerator:
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
                                            text: str, resolution: str = "1080x1920") -> Optional[str]:
-        """Create scene video with simpler text overlay approach"""
+        """Create scene video with dynamic text sizing and wrapping"""
         try:
-            # Use a very simple approach - create a temporary image with text overlay
             temp_image = Config.STORAGE_DIR / "temp" / f"temp_text_{uuid.uuid4().hex[:8]}.png"
             temp_image.parent.mkdir(parents=True, exist_ok=True)
             
-            # Load the original image
             img = Image.open(image_path)
+            # Ensure it's in RGB
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
             draw = ImageDraw.Draw(img)
             
-            # Add text overlay using PIL
+            # Font selection
             try:
                 if os.name == 'nt':  # Windows
                     font_path = "C:/Windows/Fonts/arial.ttf"
                 else:  # Linux/Mac
                     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
                 
-                try:
-                    font = ImageFont.truetype(font_path, 48)
-                except:
-                    font = ImageFont.load_default()
+                # Start with a reasonable large font size
+                font_size = 60
+                font = ImageFont.truetype(font_path, font_size)
             except:
                 font = ImageFont.load_default()
+                font_size = 20
             
-            # Wrap text
-            max_width = img.width - 100  # Leave margins
+            # Dynamic fitting loop
+            max_width = img.width - 120  # Margin
+            max_height = img.height * 0.4  # Max 40% of screen height
+            
+            fitting = True
             lines = []
-            words = text.split()
-            current_line = []
             
-            for word in words:
-                test_line = ' '.join(current_line + [word])
-                bbox = draw.textbbox((0, 0), test_line, font=font)
-                text_width = bbox[2] - bbox[0]
+            while fitting and font_size > 18:
+                lines = []
+                words = text.split()
+                current_line = []
                 
-                if text_width <= max_width:
-                    current_line.append(word)
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    bbox = draw.textbbox((0, 0), test_line, font=font)
+                    w = bbox[2] - bbox[0]
+                    if w <= max_width:
+                        current_line.append(word)
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                            current_line = [word]
+                        else: # Word itself is too long
+                            lines.append(word)
+                            current_line = []
+                if current_line:
+                    lines.append(' '.join(current_line))
+                
+                # Check height
+                line_height = font_size + 10
+                total_height = len(lines) * line_height
+                
+                if total_height > max_height:
+                    font_size -= 4
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                    except:
+                        fitting = False # Default font can't resize
                 else:
-                    if current_line:
-                        lines.append(' '.join(current_line))
-                    current_line = [word]
-            
-            if current_line:
-                lines.append(' '.join(current_line))
-            
-            # Limit to 3 lines
-            if len(lines) > 3:
-                lines = lines[:2]
-                lines.append("...")
-            
+                    fitting = False
+
             # Draw text with background
-            line_height = 60
+            line_height = font_size + 10
             total_height = len(lines) * line_height
-            y_start = img.height - total_height - 100
+            y_start = img.height - total_height - 120 # Padding from bottom
             
-            # Draw background rectangle
+            # Draw semi-transparent background box
             padding = 20
-            draw.rectangle(
-                [(50, y_start - padding), 
-                 (img.width - 50, y_start + total_height + padding)],
-                fill=(0, 0, 0, 180)
+            box_fill = (0, 0, 0, 160)
+            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            
+            overlay_draw.rectangle(
+                [(40, y_start - padding), 
+                 (img.width - 40, y_start + total_height + padding)],
+                fill=box_fill
             )
             
-            # Draw text lines
+            img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
+            draw = ImageDraw.Draw(img)
+            
+            # Draw each line centered
             for i, line in enumerate(lines):
                 bbox = draw.textbbox((0, 0), line, font=font)
-                text_width = bbox[2] - bbox[0]
-                x = (img.width - text_width) // 2
+                w = bbox[2] - bbox[0]
+                x = (img.width - w) // 2
                 y = y_start + (i * line_height)
                 draw.text((x, y), line, font=font, fill='white')
             
@@ -1016,7 +1160,8 @@ class VideoGenerator:
             with open(subtitle_file, 'w', encoding='utf-8') as f:
                 f.write("1\n")
                 f.write("00:00:00,000 --> 00:10:00,000\n")  # Long duration
-                f.write(f"{scene['text']}\n")
+                # Use voice_over for subtitles
+                f.write(f"{scene.get('voice_over', scene.get('text', ''))}\n")
                 f.write("\n")
             
             # FFmpeg command with subtitles - fix the f-string
@@ -1134,7 +1279,9 @@ class VideoGenerator:
                 project["status_message"] = f"Generating scene {i+1}/{total_scenes}..."
                 
                 # Generate audio
-                audio_info = await self.generate_audio(scene["text"], request.language, request.voice)
+                # Use voice_over if available, otherwise fallback to text
+                voice_text = scene.get("voice_over", scene["text"])
+                audio_info = await self.generate_audio(voice_text, request.language, request.voice)
                 if not audio_info["path"]:
                     logging.error(f"Failed to generate audio for scene {i+1}")
                     continue
@@ -1467,6 +1614,9 @@ async def preview_script_split(request: Dict[str, Any]):
         processor = ScriptProcessor()
         scenes = processor.split_script(script, scenes_count)
         
+        # Enrich with voice-overs
+        scenes = await processor.enrich_scenes_with_voiceover(scenes)
+        
         return {
             "success": True,
             "data": {
@@ -1488,6 +1638,9 @@ async def preview_script_split_form(
     try:
         processor = ScriptProcessor()
         scenes = processor.split_script(script, scenes_count)
+        
+        # Enrich with voice-overs
+        scenes = await processor.enrich_scenes_with_voiceover(scenes)
         
         return {
             "success": True,
