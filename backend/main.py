@@ -12,7 +12,7 @@ from PIL import ImageEnhance
 import shutil
 
 # FastAPI
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
@@ -73,6 +73,7 @@ class VideoCreateRequest(BaseModel):
     image_style: str
     resolution: str = "1080x1920"
     scenes_count: int = Field(8, ge=4, le=16)
+    scenes: Optional[List[Dict[str, Any]]] = None
     
     @field_validator('language')
     @classmethod
@@ -330,13 +331,24 @@ class VideoGenerator:
             words = len(str(audio_path).split()) if isinstance(audio_path, str) else 0
             return max(3.0, min(words * 0.15, 10.0))
     
-    async def generate_visual(self, prompt: str, style: str, scene_number: int, resolution: str = "1080x1920") -> Dict:
+    async def generate_visual(self, prompt: str, style: str, scene_number: int, resolution: str = "1080x1920", custom_image_path: Optional[str] = None) -> Dict:
         """Generate visual with AI providers or fallback to PIL"""
         try:
             visual_id = f"visual_{uuid.uuid4().hex[:8]}"
             visual_file = Config.STORAGE_DIR / "visuals" / f"{visual_id}.png"
             visual_file.parent.mkdir(parents=True, exist_ok=True)
             
+            # If custom image path is provided, use it
+            if custom_image_path and os.path.exists(custom_image_path):
+                logging.info(f"Using custom image for scene {scene_number}: {custom_image_path}")
+                # Copy to visuals directory with a new name to avoid conflicts and ensure it's in the right place
+                shutil.copy2(custom_image_path, visual_file)
+                return {
+                    "url": f"/storage/visuals/{visual_id}.png",
+                    "path": str(visual_file),
+                    "style": "custom"
+                }
+
             # Parse resolution for dimensions
             width, height = self._parse_resolution(resolution)
             
@@ -1103,8 +1115,12 @@ class VideoGenerator:
         project["status_message"] = "Starting video creation..."
         
         try:
-            # Split script into scenes
-            scenes = self.script_processor.split_script(request.script, request.scenes_count)
+            # Use provided scenes if available, otherwise split script
+            if request.scenes:
+                scenes = request.scenes
+                logging.info(f"Using {len(scenes)} provided scenes for project {project_id}")
+            else:
+                scenes = self.script_processor.split_script(request.script, request.scenes_count)
             project["scenes"] = scenes
             
             # Generate assets for each scene
@@ -1128,7 +1144,8 @@ class VideoGenerator:
                     scene.get("visual_prompt", scene["text"]),
                     request.image_style,
                     scene["scene_number"],
-                    request.resolution
+                    request.resolution,
+                    custom_image_path=scene.get("custom_image_path")
                 )
                 if not visual_info["path"]:
                     logging.error(f"Failed to generate visual for scene {i+1}")
@@ -1522,6 +1539,38 @@ async def download_video(video_filename: str):
         filename=video_filename,
         media_type='video/mp4'
     )
+
+@app.post("/api/upload/scene-image")
+async def upload_scene_image(file: UploadFile = File(...)):
+    """Upload a custom image for a scene"""
+    try:
+        # Create visuals directory if it doesn't exist
+        visuals_dir = Config.STORAGE_DIR / "visuals"
+        visuals_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate a unique filename
+        file_extension = Path(file.filename).suffix
+        if not file_extension:
+            file_extension = ".png"
+        
+        filename = f"custom_{uuid.uuid4().hex[:8]}{file_extension}"
+        file_path = visuals_dir / filename
+        
+        # Save the file
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        
+        return {
+            "success": True,
+            "data": {
+                "url": f"/storage/visuals/{filename}",
+                "path": str(file_path)
+            }
+        }
+    except Exception as e:
+        logging.error(f"Failed to upload scene image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ========== RUN SERVER ==========
 if __name__ == "__main__":
