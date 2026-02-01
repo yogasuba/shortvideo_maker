@@ -34,14 +34,12 @@ test_*.txt
 test_*.mp4
 test_*.mp3
 test_*.png
-test_*.py
-debug_*.py
-debug_*.txt
-*.log
 test_storage/
 test_log.txt
 debug_output.txt
 debug_log_2.txt
+verification_result.txt
+test_debug.log
 
 # IDEs
 .vscode/

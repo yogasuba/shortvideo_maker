@@ -1,0 +1,30 @@
+# General
+__pycache__/
+*.py[cod]
+*.log
+.env
+.venv
+venv/
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Storage
+storage/
+videos/
+temp/
+backend/storage/
+backend/temp/
+
+# Test Artifacts
+test_*.png
+test_*.mp3
+test_*.mp4
+test_voices_api.py
+verification_result.txt
+test_debug.log
+debug_*.txt
+
+# IDE
+.vscode/
+.idea/

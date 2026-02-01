@@ -10,6 +10,7 @@ import logging
 import math
 from PIL import ImageEnhance
 import shutil
+import unicodedata
 
 # FastAPI
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile
@@ -32,6 +33,16 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs import save
 import base64
 from openai import AsyncOpenAI
+
+# Complex script rendering
+from complex_script_renderer import ComplexScriptRenderer
+from font_downloader import ensure_fonts_available
+from ffmpeg_downloader import ensure_ffmpeg_has_harfbuzz
+from exceptions import (
+    VideoPipelineError, UserInputError, ResourceMissingError, 
+    FFmpegError, TimeOutError, StorageError, AssetDownloadError,
+    VideoConcatenationError
+)
 
 # Load environment variables
 env_path = Path(__file__).parent / ".env"
@@ -58,6 +69,92 @@ class Config:
     FFMPEG_PATH = os.path.normpath("C:/ffmpeg/bin/ffmpeg.exe")
     FFPROBE_PATH = os.path.normpath("C:/ffmpeg/bin/ffprobe.exe")
     
+    @classmethod
+    def validate_ffmpeg_harfbuzz(cls):
+        """
+        CRITICAL: Validate FFmpeg has harfbuzz support for complex scripts.
+        
+        Automatically downloads FFmpeg with harfbuzz if needed.
+        
+        Raises:
+            RuntimeError: If FFmpeg harfbuzz support cannot be ensured
+        """
+        ffmpeg_path = cls.get_ffmpeg()
+        logging.info(f"Checking FFmpeg: {ffmpeg_path}")
+        
+        try:
+            # Try to ensure harfbuzz support (downloads if needed)
+            if ensure_ffmpeg_has_harfbuzz(ffmpeg_path):
+                logging.info("✓ FFmpeg with harfbuzz support verified")
+                return True
+            else:
+                # Fallback: just check that FFmpeg has drawtext filter
+                result = subprocess.run(
+                    [ffmpeg_path, "-filters"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+                
+                filters_output = result.stdout.lower()
+                
+                if "drawtext" not in filters_output:
+                    raise RuntimeError(
+                        "FFmpeg drawtext filter not found. "
+                        "Ensure FFmpeg is properly installed."
+                    )
+                
+                logging.warning("⚠ FFmpeg drawtext available but harfbuzz status unclear")
+                logging.warning("  Complex script rendering may not work perfectly")
+                return True
+            
+        except Exception as e:
+            error_msg = (
+                f"CRITICAL: FFmpeg validation failed: {e}\n"
+                f"Complex script rendering requires:\n"
+                f"  • FFmpeg with drawtext filter\n"
+                f"  • HarfBuzz library support (--enable-libharfbuzz)\n"
+                f"  • FreeType library support (--enable-libfreetype)\n"
+                f"\n"
+                f"Attempted to auto-download FFmpeg with harfbuzz, but failed.\n"
+                f"Manual options:\n"
+                f"  1. Download from: https://github.com/BtbN/FFmpeg-Builds (has harfbuzz)\n"
+                f"  2. Or compile with: ./configure --enable-libharfbuzz --enable-libfreetype\n"
+            )
+            logging.error(error_msg)
+            raise RuntimeError(error_msg)
+    
+    @classmethod
+    def validate_ffmpeg_for_complex_scripts(cls):
+        ffmpeg_path = cls.get_ffmpeg()
+        logging.info(f"Validating FFmpeg for complex scripts: {ffmpeg_path}")
+        
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore"
+        )
+        
+        config = result.stdout.lower()
+        
+        if "--enable-libass" not in config:
+            raise RuntimeError("FFmpeg missing libass (ASS subtitles required)")
+            
+        if "--enable-libharfbuzz" not in config:
+            raise RuntimeError("FFmpeg missing harfbuzz (complex script shaping required)")
+            
+        if "--enable-libfreetype" not in config:
+            raise RuntimeError("FFmpeg missing freetype (font rendering required)")
+            
+        logging.info("✓ FFmpeg validated for ASS + HarfBuzz + FreeType")
+        return True
+
+
+
     @classmethod
     def get_ffmpeg(cls):
         return cls.FFMPEG_PATH if os.path.exists(cls.FFMPEG_PATH) else (shutil.which("ffmpeg") or "ffmpeg")
@@ -304,6 +401,25 @@ class VideoGenerator:
         self.image_styles = self._initialize_image_styles()
         self.script_processor = ScriptProcessor()
         
+        # CRITICAL: Validate FFmpeg has harfbuzz support
+        try:
+            Config.validate_ffmpeg_for_complex_scripts()
+        except RuntimeError as e:
+            logging.error(str(e))
+            raise
+        
+        # CRITICAL: Initialize and validate fonts
+        fonts_dir = Config.BASE_DIR / "fonts"
+        try:
+            ensure_fonts_available(fonts_dir)
+            logging.info("✓ All essential fonts verified and available")
+        except RuntimeError as e:
+            logging.error(str(e))
+            raise
+        
+        self.complex_script_renderer = ComplexScriptRenderer(fonts_dir=fonts_dir)
+        logging.info("✓ Complex script renderer initialized")
+        
         # Initialize AI clients
         self.replicate_token = os.getenv("REPLICATE_API_TOKEN")
         self.stability_key = os.getenv("STABILITY_API_KEY")
@@ -362,6 +478,48 @@ class VideoGenerator:
     
     def get_image_styles(self):
         return self.image_styles
+    
+    async def run_ffmpeg_safe(self, cmd: list, timeout: int = 60, context: str = "operation") -> str:
+        """
+        Executes FFmpeg with safety rails. 
+        1. Captures stderr
+        2. Enforces timeout
+        3. Checks output file existence
+        4. Raises typed exceptions (No swallowing errors!)
+        """
+        try:
+            logging.info(f"Starting FFmpeg: {context}")
+            # Use asyncio.to_thread to avoid blocking the event loop
+            result = await asyncio.to_thread(
+                subprocess.run, 
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=timeout,
+                encoding='utf-8', 
+                errors='ignore'
+            )
+            
+            if result.returncode != 0:
+                # Parse stderr for common errors
+                error_msg = f"FFmpeg exited with code {result.returncode}"
+                details = result.stderr[-1000:] # Last 1000 chars
+                
+                if "No such file or directory" in details:
+                    raise ResourceMissingError("Input file missing during rendering", details)
+                if "Permission denied" in details:
+                    raise StorageError("Permission denied writing output", details)
+                    
+                raise FFmpegError(error_msg, details)
+                
+            return result.stderr # FFmpeg usually logs stats to stderr, which is fine
+            
+        except subprocess.TimeoutExpired:
+            raise TimeOutError(f"FFmpeg timed out after {timeout}s", f"Context: {context}")
+            
+        except Exception as e:
+            if isinstance(e, VideoPipelineError): raise e
+            raise VideoPipelineError(f"Unexpected error: {str(e)}", "UNKNOWN_ERROR", str(e))
     
     def _parse_resolution(self, resolution: str) -> tuple:
         """Parse resolution string to (width, height) tuple"""
@@ -926,45 +1084,163 @@ class VideoGenerator:
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
                                            text: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
-        """Create scene video with dynamic text sizing and wrapping"""
+        """Create scene video with proper complex script handling
+        
+        CRITICAL PIPELINE CHANGE:
+        - Simple Scripts (English): Use optimized PIL fallback (Fast)
+        - Complex Scripts (Tamil/Hindi): Use LIBASS (.ass) pipeline (Correct)
+        """
+        try:
+            # STEP 1: Normalize Unicode immediately after extraction
+            text = unicodedata.normalize("NFC", text)
+            logging.info(f"✓ Unicode normalized for language '{language}'")
+            
+            # STEP 2: Check standard pipelines
+            renderer = self.complex_script_renderer
+            
+            if language not in renderer.COMPLEX_SCRIPTS:
+                # FAST PATH: Use PIL for simple scripts (English, etc.)
+                return await self._create_scene_with_pil_fallback(
+                    image_path, audio_path, output_path, duration, text, resolution, language
+                )
+            
+            # === COMPLEX SCRIPT PIPELINE (ASS/LIBASS) ===
+            logging.info(f"Entering Complex Script Pipeline (LIBASS) for {language}")
+            
+            # 1. Find Font
+            font_path = renderer.find_font(language)
+            if not font_path:
+                msg = f"CRITICAL: No font found for {language}. Cannot generate subtitles."
+                logging.error(msg)
+                raise RuntimeError(msg)
+            
+            # 2. Wrap Text
+            max_width_lines = 1000  # Approx pixels
+            font_size = 42
+            lines = renderer.wrap_text_at_word_boundaries(
+                text, max_width_lines, font_path, font_size, language
+            )
+            wrapped_text = "\n".join(lines)
+            
+            # 3. Generate ASS File
+            ass_file_path = Config.STORAGE_DIR / "temp" / f"sub_{uuid.uuid4().hex}.ass"
+            ass_file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            renderer.generate_ass_file(
+                wrapped_text,
+                ass_file_path,
+                font_path,
+                font_size,
+                duration,
+                resolution,
+                language
+            )
+            
+            # 4. Generate Clean Video (Image + Audio) - Intermediate
+            temp_video = Config.STORAGE_DIR / "temp" / f"raw_{uuid.uuid4().hex}.mp4"
+            width, height = resolution.split('x')
+            
+            # Create base video first
+            cmd_base = [
+                Config.get_ffmpeg(),
+                "-loop", "1",
+                "-i", image_path,
+                "-i", audio_path,
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-pix_fmt", "yuv420p",
+                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-t", str(duration),
+                "-shortest",
+                "-y",
+                str(temp_video)
+            ]
+            subprocess.run(cmd_base, check=True, capture_output=True)
+            
+            # 5. Burn ASS Subtitles (Video + ASS -> Final Video)
+            # Use forward slashes for filter paths to be safe on Windows
+            ass_path_filter = str(ass_file_path).replace('\\', '/').replace(':', '\\:')
+            # We must specify fontsdir to ensure libass finds the font if it's local
+            fonts_dir_filter = str(Config.BASE_DIR / "fonts").replace('\\', '/').replace(':', '\\:')
+            
+            cmd_burn = [
+                Config.get_ffmpeg(),
+                "-i", str(temp_video),
+                "-vf", f"ass='{ass_path_filter}':fontsdir='{fonts_dir_filter}'",
+                "-c:a", "copy",
+                "-y",
+                str(output_path)
+            ]
+            
+            await self.run_ffmpeg_safe(cmd_burn, timeout=60, context=f"Burning subtitles for {language}")
+            
+            # Cleanup
+            if ass_file_path.exists(): ass_file_path.unlink()
+            if temp_video.exists(): temp_video.unlink()
+            
+            if output_path.exists():
+                logging.info(f"✓ Scene video with ASS subtitles created: {output_path}")
+                return str(output_path)
+            else:
+                raise FFmpegError("Scene video output not found after burning", str(output_path))
+                
+        except Exception as e:
+            logging.error(f"Complex script rendering failed: {e}")
+            # Re-raise nicely
+            if isinstance(e, VideoPipelineError): raise e
+            raise FFmpegError(f"Rendering failed for {language}: {e}")
+    
+    async def _create_scene_with_pil_fallback(self, image_path: str, audio_path: str, 
+                                            output_path: Path, duration: float, 
+                                            text: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
+        """Fallback PIL-based text rendering for simple scripts ONLY
+        
+        WARNING: Complex scripts (Tamil, Hindi, etc.) MUST NOT use PIL rendering.
+        PIL cannot perform proper glyph shaping and will produce broken output.
+        This method should only be called for simple scripts (English, etc.)
+        """
+        # HARD ASSERTION: Reject complex scripts
+        self.complex_script_renderer.assert_not_pil_for_complex_script(
+            language, 
+            f"PIL fallback method called for language '{language}'. Complex scripts require FFmpeg with harfbuzz."
+        )
+        
         try:
             temp_image = Config.STORAGE_DIR / "temp" / f"temp_text_{uuid.uuid4().hex[:8]}.png"
             temp_image.parent.mkdir(parents=True, exist_ok=True)
             
+            # Ensure Unicode is normalized
+            text = unicodedata.normalize("NFC", text)
+            
             img = Image.open(image_path)
-            # Ensure it's in RGB
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             
             draw = ImageDraw.Draw(img)
             
-            # Font selection
+            # Get font for language
+            renderer = self.complex_script_renderer
+            font_path = renderer.find_font(language)
+            
+            if not font_path:
+                font_path = "C:/Windows/Fonts/arial.ttf" if os.name == 'nt' else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            
+            # Dynamic fitting loop
+            max_width = img.width - 120
+            max_height = img.height * 0.4
+            font_size = 60
+            
+            fitting = True
+            lines = []
+            
             try:
-                if os.name == 'nt':  # Windows
-                    font_paths = []
-                    if language == "ta":
-                        font_paths.extend(["C:/Windows/Fonts/Nirmala.ttc", "C:/Windows/Fonts/Latha.ttf", "C:/Windows/Fonts/nirmala.ttc"])
-                    font_paths.append("C:/Windows/Fonts/arial.ttf")
-                    
-                    font_path = next((p for p in font_paths if os.path.exists(p)), "C:/Windows/Fonts/arial.ttf")
-                else:  # Linux/Mac
-                    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-                
-                # Start with a reasonable large font size
-                font_size = 60
                 font = ImageFont.truetype(font_path, font_size)
             except:
                 font = ImageFont.load_default()
                 font_size = 20
             
-            # Dynamic fitting loop
-            max_width = img.width - 120  # Margin
-            max_height = img.height * 0.4  # Max 40% of screen height
-            
-            fitting = True
-            lines = []
-            
-            while fitting and font_size > 12: # Lowered minimum font size
+            # Wrap at word boundaries
+            while fitting and font_size > 12:
                 lines = []
                 words = text.split()
                 current_line = []
@@ -979,14 +1255,13 @@ class VideoGenerator:
                         if current_line:
                             lines.append(' '.join(current_line))
                             current_line = [word]
-                        else: # Word itself is too long
+                        else:
                             lines.append(word)
                             current_line = []
                 if current_line:
                     lines.append(' '.join(current_line))
                 
                 # Check height
-                # Calculate actual height of these lines
                 temp_bbox = draw.textbbox((0, 0), "Ayg", font=font)
                 line_height_from_font = (temp_bbox[3] - temp_bbox[1]) + 15
                 total_height = len(lines) * line_height_from_font
@@ -996,20 +1271,18 @@ class VideoGenerator:
                     try:
                         font = ImageFont.truetype(font_path, font_size)
                     except:
-                        fitting = False # Default font can't resize
+                        fitting = False
                 else:
                     fitting = False
-
+            
             # Draw text with background
-            # Calculate actual line height from font
             bbox_sample = draw.textbbox((0, 0), "Ayg", font=font)
-            line_height = (bbox_sample[3] - bbox_sample[1]) + 15 # Add some spacing
+            line_height = (bbox_sample[3] - bbox_sample[1]) + 15
             total_height = len(lines) * line_height
             
-            # Position at the bottom (approx 15% from bottom)
             y_start = img.height - total_height - (img.height * 0.15)
             
-            # Draw semi-transparent background box per line
+            # Draw semi-transparent background
             padding = 15
             box_fill = (0, 0, 0, 160)
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
@@ -1022,7 +1295,6 @@ class VideoGenerator:
                 lx = (img.width - line_w) // 2
                 ly = y_start + (i * line_height)
                 
-                # Draw box for this specific line
                 overlay_draw.rectangle(
                     [(lx - padding, ly - 5), 
                      (lx + line_w + padding, ly + line_h + 10)],
@@ -1040,14 +1312,13 @@ class VideoGenerator:
                 y = y_start + (i * line_height)
                 draw.text((x, y), line, font=font, fill='white')
             
-            # Save the image with text
             img.save(str(temp_image), "PNG", quality=95)
             
             # Now create video with this image
             cmd = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
-                "-i", str(temp_image),  # Use image with text
+                "-i", str(temp_image),
                 "-i", audio_path,
                 "-c:v", "libx264",
                 "-c:a", "aac",
@@ -1060,21 +1331,20 @@ class VideoGenerator:
                 str(output_path)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, timeout=30, encoding='utf-8', errors='ignore')
             
-            # Clean up temporary image
             if temp_image.exists():
                 temp_image.unlink()
             
             if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1024:
-                logging.info(f"✓ Scene video with PIL text created: {output_path}")
+                logging.info(f"✓ Scene video with PIL fallback text created: {output_path}")
                 return str(output_path)
             else:
                 logging.error(f"PIL overlay FFmpeg failed: {result.stderr[:500]}")
                 return None
             
         except Exception as e:
-            logging.error(f"PIL text overlay failed: {e}")
+            logging.error(f"PIL fallback text overlay failed: {e}")
             return None
         
     async def _create_simple_scene_video(self, image_path: str, audio_path: str, 
@@ -1324,7 +1594,10 @@ class VideoGenerator:
             project["progress"] = 85
             project["status_message"] = "Combining scenes into final video..."
             
-            video_url = await self._concatenate_videos(scene_videos, request.resolution)
+            # Determine if we should use demuxer (for complex scripts with ASS subtitles)
+            use_demuxer = request.language in ComplexScriptRenderer.COMPLEX_SCRIPTS
+            
+            video_url = await self._concatenate_videos(scene_videos, request.resolution, use_demuxer=use_demuxer)
             
             # Update project
             project["progress"] = 100
@@ -1348,21 +1621,29 @@ class VideoGenerator:
         except Exception as e:
             logging.error(f"Video creation failed: {e}", exc_info=True)
             project["status"] = "failed"
-            project["error"] = str(e)
-            project["status_message"] = f"Error: {str(e)}"
+            
+            if isinstance(e, VideoPipelineError):
+                project["error"] = e.to_dict()
+                project["status_message"] = e.message
+            else:
+                # Generic fallback
+                project["error"] = {
+                    "code": "INTERNAL_ERROR",
+                    "message": "An unexpected error occurred.",
+                    "details": str(e),
+                    "action": "RETRY"
+                }
+                project["status_message"] = f"Error: {str(e)}"
     
-    async def _concatenate_videos(self, video_files: List[str], resolution: str) -> str:
+    async def _concatenate_videos(self, video_files: List[str], resolution: str, use_demuxer: bool = False) -> str:
         """Concatenate multiple videos into one"""
         try:
             if not video_files:
                 logging.error("No video files to concatenate")
-                return self._create_fallback_video(resolution)
+                # Instead of fallback, strict error
+                raise VideoConcatenationError("No valid video files to concatenate")
             
             video_id = f"video_{uuid.uuid4().hex[:8]}"
-            output_file = Config.STORAGE_DIR / "videos" / f"{video_id}.mp4"
-            
-            # Ensure directory exists
-            output_file.parent.mkdir(parents=True, exist_ok=True)
             
             # Filter valid videos
             valid_videos = []
@@ -1376,28 +1657,66 @@ class VideoGenerator:
                         logging.warning(f"Skipping small video: {video} ({size} bytes)")
             
             if not valid_videos:
-                logging.error("No valid videos to concatenate")
-                return self._create_fallback_video(resolution)
+                raise VideoConcatenationError("No valid videos to concatenate after filtering")
+            
+            if use_demuxer:
+                logging.info(f"Using Concat Demuxer for {len(valid_videos)} videos (ASS Subtitles)...")
+                return await self._concatenate_with_demuxer(valid_videos, video_id)
+            else:
+                logging.info(f"Using Filter Complex for {len(valid_videos)} videos (Standard)...")
+                return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+                
+        except Exception as e:
+            if isinstance(e, VideoPipelineError): raise e
+            logging.error(f"Video concatenation failed: {e}")
+            raise VideoConcatenationError(f"Concatenation failed: {e}")
+
+    async def _concatenate_with_demuxer(self, video_files: List[str], video_id: str) -> str:
+        """
+        Concatenate using the concat demuxer (no re-encoding).
+        Recommended for videos with burned ASS subtitles to avoid EINVAL errors.
+        """
+        try:
+            output_file = Config.STORAGE_DIR / "videos" / f"{video_id}.mp4"
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             
             # Create concat file
             concat_file = Config.STORAGE_DIR / "temp" / f"concat_{video_id}.txt"
             concat_file.parent.mkdir(parents=True, exist_ok=True)
             
+            # Write absolute paths to concat file
             with open(concat_file, 'w', encoding='utf-8') as f:
-                for video in valid_videos:
-                    # Escape single quotes for FFmpeg
-                    video_escaped = str(video).replace("'", "'\\''")
-                    f.write(f"file '{video_escaped}'\n")
+                for video in video_files:
+                    # FFmpeg concat requires forward slashes and escaped quotes
+                    path_str = str(Path(video).absolute()).replace('\\', '/').replace("'", "'\\''")
+                    f.write(f"file '{path_str}'\n")
             
-            logging.info(f"Concatenating {len(valid_videos)} videos...")
+            cmd = [
+                Config.get_ffmpeg(),
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_file),
+                "-c", "copy",
+                "-movflags", "+faststart",
+                "-y",
+                str(output_file)
+            ]
             
-            # Force re-encoding (Method 2) for better cross-platform compatibility and visual consistency
-            logging.info("Using filter complex concatenation (re-encoding) for consistency...")
-            return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
-                
+            await self.run_ffmpeg_safe(cmd, timeout=300, context=f"Demuxer Concatenation ({len(video_files)} files)")
+            
+            if output_file.exists():
+                file_size = output_file.stat().st_size
+                if file_size > 1024:
+                    logging.info(f"✓ Demuxer Concatenation successful. Size: {file_size} bytes")
+                    return f"/storage/videos/{video_id}.mp4"
+                else:
+                    raise VideoConcatenationError("Concatenation produced empty video file", f"Size: {file_size} bytes")
+            else:
+                 raise VideoConcatenationError("Concatenation output file not found", str(output_file))
+                 
         except Exception as e:
-            logging.error(f"Video concatenation failed: {e}")
-            return self._create_fallback_video(resolution)
+            if isinstance(e, VideoPipelineError): raise e
+            raise VideoConcatenationError(f"Demuxer concatenation failed: {e}")
     
     async def _concatenate_with_filter_complex(self, video_files: List[str], video_id: str, resolution: str) -> str:
         """Alternative concatenation method using filter complex"""
@@ -1430,18 +1749,23 @@ class VideoGenerator:
                 str(output_file)
             ])
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            # Use safe wrapper with 300s timeout
+            await self.run_ffmpeg_safe(cmd, timeout=300, context=f"Concatenating {len(video_files)} videos")
             
-            if result.returncode == 0 and output_file.exists():
+            if output_file.exists():
                 file_size = output_file.stat().st_size
                 if file_size > 1024:
+                    logging.info(f"✓ Concatenation successful. Size: {file_size} bytes")
                     return f"/storage/videos/{video_id}.mp4"
+                else:
+                    raise FFmpegError("Concatenation produced empty video file", f"Size: {file_size} bytes")
+            else:
+                 raise FFmpegError("Concatenation output file not found", str(output_file))
             
-            return ""
-                
         except Exception as e:
+            if isinstance(e, VideoPipelineError): raise e
             logging.error(f"Filter complex concatenation failed: {e}")
-            return ""
+            raise FFmpegError(f"Concatenation failed: {e}")
     
     def _create_fallback_video(self, resolution: str) -> str:
         """Create a fallback video when everything else fails"""
