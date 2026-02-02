@@ -311,16 +311,14 @@ class ComplexScriptRenderer:
         text: str,
         output_path: Path,
         font_path: str,
-        font_size: int = 42,
+        font_size: int = 60,  # Increased font size
         duration: float = 5.0,
         resolution: str = "1080x1920",
-        language: str = "en"
+        language: str = "en",
+        margin_v: int = 100
     ) -> str:
         """
         Generate an ASS (Advanced Substation Alpha) subtitle file.
-        
-        This is the INDUSTRY STANDARD for rendering complex scripts (Tamil, Hindi, etc.)
-        because it allows libass + HarfBuzz to handle text shaping correctly.
         
         Args:
             text: Normalized text to display
@@ -330,6 +328,7 @@ class ComplexScriptRenderer:
             duration: Duration of the subtitle
             resolution: Video resolution "WxH"
             language: Language code
+            margin_v: Vertical margin from the bottom
             
         Returns:
             Path to the generated .ass file
@@ -338,9 +337,33 @@ class ComplexScriptRenderer:
         width = int(width)
         height = int(height)
         
-        # Windows path handling for ASS files (forward slashes are safer for libass)
+        # Windows path handling for ASS files
         font_path = str(font_path).replace('\\', '/')
         
+        # Style Definition for High Contrast/Readability:
+        # BorderStyle=3 (Opaque Box)
+        # BackColour=&H60000000 (Semi-transparent Black: 60 alpha)
+        # Outline=2 (Box padding effectively)
+        # Shadow=0
+        # Alignment=1 (Bottom Left) -> CHANGED FROM 2 (Center)
+        # MarginL=40 (Left padding) -> CHANGED FROM 10
+        style_line = (
+            f"Style: Default,"
+            f"{os.path.basename(font_path)},"
+            f"{font_size},"
+            f"&H00FFFFFF,"        # PrimaryColour (White)
+            f"&H000000FF,"        # SecondaryColour
+            f"&H00000000,"        # OutlineColour
+            f"&H60000000,"        # BackColour (60% black box)
+            f"0,0,0,0,"           # Bold, Italic, Underline, StrikeOut
+            f"100,100,0,0,"       # ScaleX, ScaleY, Spacing, Angle
+            f"3,2,0,"             # BorderStyle=Box, Outline padding, Shadow=0
+            f"1,"                 # Alignment = Bottom Left
+            f"40,40,{margin_v},"  # MarginL, MarginR, MarginV
+            f"1"
+        )
+
+
         # Create valid ASS header
         header = f"""[Script Info]
 ScriptType: v4.00+
@@ -351,7 +374,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{os.path.basename(font_path)},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,100,1
+{style_line}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

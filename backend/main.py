@@ -1115,8 +1115,38 @@ class VideoGenerator:
                 raise RuntimeError(msg)
             
             # 2. Wrap Text
-            max_width_lines = 1000  # Approx pixels
-            font_size = 42
+            max_width_lines = 3000  # Set high to let Libass handle accurate wrapping via margins
+            font_size = 60  # Increased font size for readability
+            
+            # --- DYNAMIC POSITIONING ---
+            try:
+                # Calculate Layout: Image Center-Aligned
+                # Goal: Subtitles at Bottom of Image (inside)
+                with Image.open(image_path) as img:
+                    img_w, img_h = img.size
+                
+                vid_w, vid_h = self._parse_resolution(resolution)
+                
+                # Calculate new dimensions after scaling
+                ratio = min(vid_w / img_w, vid_h / img_h)
+                scaled_h = int(img_h * ratio)
+                
+                # Calculate MarginV (Distance from Video Bottom)
+                # Image is Vertically Centered.
+                # Top Black Bar = Bottom Black Bar = (VidH - ScaledH) / 2
+                # Image Bottom = VidH - Bottom Black Bar
+                # Distance from Video Bottom to Image Bottom = Bottom Black Bar
+                # We want text INSIDE image, so add inner margin to that.
+                
+                bottom_bar_height = (vid_h - scaled_h) // 2
+                inner_margin = 80  # Padding inside the image
+                margin_v = bottom_bar_height + inner_margin
+                
+                logging.info(f"Layout Calc: VidH={vid_h}, ImgH={scaled_h}, BottomBar={bottom_bar_height}, MarginV={margin_v}")
+            except Exception as e:
+                logging.error(f"Error calculating subtitle position: {e}")
+                margin_v = 100 # Fallback
+            
             lines = renderer.wrap_text_at_word_boundaries(
                 text, max_width_lines, font_path, font_size, language
             )
@@ -1133,7 +1163,8 @@ class VideoGenerator:
                 font_size,
                 duration,
                 resolution,
-                language
+                language,
+                margin_v=margin_v
             )
             
             # 4. Generate Clean Video (Image + Audio) - Intermediate
