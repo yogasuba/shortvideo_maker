@@ -464,12 +464,6 @@ class VideoGenerator:
     
     def _initialize_image_styles(self):
         return [
-            {"id": "default", "name": "Default", "description": "Realistic and clean"},
-            {"id": "pixar_art", "name": "Pixar Art", "description": "3D animated style"},
-            {"id": "anime", "name": "Anime", "description": "Japanese animation style"},
-            {"id": "comic", "name": "Comic", "description": "Graphic novel style"},
-            {"id": "lego", "name": "Lego", "description": "Block-based style"},
-            {"id": "cinematic", "name": "Cinematic", "description": "Movie-like quality"},
             {"id": "pexels", "name": "Pexels Photo", "description": "High-quality realistic photos"}
         ]
     
@@ -1864,7 +1858,7 @@ async def root():
         "features": [
             "Single script input - we auto-split into scenes",
             "10 different voices with audio",
-            "6 image styles with proper application",
+            "Pexels realistic image style",
             "Video with audio, images, and text overlay",
             "Multiple languages support"
         ]
@@ -2102,9 +2096,9 @@ if __name__ == "__main__":
     print("\nFeatures:")
     print("• Single script input - auto-split into scenes")
     print("• 10 Different Voices with audio generation")
-    print("• 6 Image Styles with proper effects")
+    print("• Pexels realistic image style")
     print("• Video with audio, images, and text overlay")
     print("• Multiple languages support")
     print("=" * 50)
     
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)

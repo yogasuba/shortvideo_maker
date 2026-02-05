@@ -34,7 +34,7 @@ function App() {
   const [selectedVoice, setSelectedVoice] = useState('');
   
   // Step 4: Style
-  const [selectedStyle, setSelectedStyle] = useState('');
+  const [selectedStyle, setSelectedStyle] = useState('pexels');
   
   // Step 5: Generation / Progress
   const [currentProjectId, setCurrentProjectId] = useState('');

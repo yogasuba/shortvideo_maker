@@ -1,5 +1,5 @@
 import React from 'react';
-import { Palette, Image, Sparkles, Flower, BookOpen, LayoutGrid, Film } from 'lucide-react';
+import { Palette, Image, Film } from 'lucide-react';
 
 const ImageStyleStep = ({ 
   config, selectedStyle, setSelectedStyle, prevStep, createVideo 
@@ -7,12 +7,6 @@ const ImageStyleStep = ({
   
   const getStyleIcon = (styleId) => {
     const icons = {
-      'default': <Image className="w-8 h-8" />,
-      'pixar_art': <Sparkles className="w-8 h-8" />,
-      'anime': <Flower className="w-8 h-8" />,
-      'comic': <BookOpen className="w-8 h-8" />,
-      'lego': <LayoutGrid className="w-8 h-8" />,
-      'cinematic': <Film className="w-8 h-8" />,
       'pexels': <Image className="w-8 h-8" />
     };
     return icons[styleId] || <Image className="w-8 h-8" />;
