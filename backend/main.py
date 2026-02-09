@@ -173,6 +173,7 @@ class VideoCreateRequest(BaseModel):
     image_style: str
     resolution: str = "1080x1920"
     scenes_count: int = Field(8, ge=4, le=16)
+    subtitle_style: str = "static"  # Options: "static", "scroll_up"
     scenes: Optional[List[Dict[str, Any]]] = None
     
     @field_validator('language')
@@ -1003,7 +1004,9 @@ class VideoGenerator:
         
         return img
     
-    async def create_scene_video(self, scene: Dict, audio_info: Dict, visual_info: Dict, style: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
+    async def create_scene_video(self, scene: Dict, audio_info: Dict, visual_info: Dict, style: str, 
+                                resolution: str = "1080x1920", language: str = "en",
+                                subtitle_style: str = "static") -> Optional[str]:
         """Create a single scene video with audio and text overlay"""
         try:
             # Create scenes directory if it doesn't exist
@@ -1024,7 +1027,8 @@ class VideoGenerator:
                 audio_info["duration"],
                 subtitle_text,
                 resolution,
-                language
+                language,
+                subtitle_style=subtitle_style
             )
             
             if scene_path:
@@ -1077,7 +1081,8 @@ class VideoGenerator:
             
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
-                                           text: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
+                                           text: str, resolution: str = "1080x1920", language: str = "en",
+                                           subtitle_style: str = "static") -> Optional[str]:
         """Create scene video with proper complex script handling
         
         CRITICAL PIPELINE CHANGE:
@@ -1092,8 +1097,8 @@ class VideoGenerator:
             # STEP 2: Check standard pipelines
             renderer = self.complex_script_renderer
             
-            if language not in renderer.COMPLEX_SCRIPTS:
-                # FAST PATH: Use PIL for simple scripts (English, etc.)
+            if language not in renderer.COMPLEX_SCRIPTS and subtitle_style == "static":
+                # FAST PATH: Use PIL for simple scripts (English, etc.) without animation
                 return await self._create_scene_with_pil_fallback(
                     image_path, audio_path, output_path, duration, text, resolution, language
                 )
@@ -1158,7 +1163,8 @@ class VideoGenerator:
                 duration,
                 resolution,
                 language,
-                margin_v=margin_v
+                margin_v=margin_v,
+                style=subtitle_style
             )
             
             # 4. Generate Clean Video (Image + Audio) - Intermediate
@@ -1602,7 +1608,8 @@ class VideoGenerator:
                 
                 # Create scene video
                 scene_video_path = await self.create_scene_video(
-                    scene, audio_info, visual_info, request.image_style, request.resolution, request.language
+                    scene, audio_info, visual_info, request.image_style, request.resolution, request.language,
+                    subtitle_style=request.subtitle_style
                 )
                 
                 if scene_video_path and Path(scene_video_path).exists():

@@ -315,7 +315,8 @@ class ComplexScriptRenderer:
         duration: float = 5.0,
         resolution: str = "1080x1920",
         language: str = "en",
-        margin_v: int = 100
+        margin_v: int = 100,
+        style: str = "static"
     ) -> str:
         """
         Generate an ASS (Advanced Substation Alpha) subtitle file.
@@ -329,6 +330,7 @@ class ComplexScriptRenderer:
             resolution: Video resolution "WxH"
             language: Language code
             margin_v: Vertical margin from the bottom
+            style: "static" or "scroll_up"
             
         Returns:
             Path to the generated .ass file
@@ -394,7 +396,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # NOTE: We DO NOT double escape like for FFmpeg command line
         ass_text = text.replace('\n', r'\N')
         
-        event_line = f"Dialogue: 0,0:00:00.00,{end_time},Default,,0,0,0,,{ass_text}\n"
+        # Apply scrolling effect if requested
+        # {\move(x1, y1, x2, y2)}
+        if style == "scroll_up":
+            # Start below screen, end above screen
+            # Centered horizontally
+            x_pos = width // 2
+            y_start = height + 50
+            y_end = -50
+            
+            # Need to change alignment to 2 (Bottom Center) for better scroll look
+            # instead of using Alignment=1 from the style.
+            # We override it in the dialogue text.
+            display_text = f"{{\\an2\\move({x_pos}, {y_start}, {x_pos}, {y_end})}}{ass_text}"
+        else:
+            display_text = ass_text
+            
+        event_line = f"Dialogue: 0,0:00:00.00,{end_time},Default,,0,0,0,,{display_text}\n"
         
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(header)

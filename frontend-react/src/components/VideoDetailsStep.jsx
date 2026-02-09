@@ -7,6 +7,7 @@ const VideoDetailsStep = ({
   tone, setTone, 
   scenesCount, setScenesCount, 
   orientation, setOrientation, 
+  subtitleStyle, setSubtitleStyle,
   nextStep, config 
 }) => {
   
@@ -116,6 +117,20 @@ const VideoDetailsStep = ({
               <small className="text-gray-500">16:9 (1920x1080)</small>
             </div>
           </div>
+        </div>
+
+        <div className="mb-6">
+          <label className="block mb-2 font-bold text-gray-700">Subtitle Animation</label>
+          <select 
+            className="form-control-custom appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e")` }}
+            value={subtitleStyle}
+            onChange={(e) => setSubtitleStyle(e.target.value)}
+          >
+            <option value="static">Static (Default)</option>
+            <option value="scroll_up">Scroll Up (Movie Credits)</option>
+          </select>
+          <small className="text-gray-500 mt-1 block">Choose how your subtitles appear on screen</small>
         </div>
         
         <div className="flex justify-between mt-8">

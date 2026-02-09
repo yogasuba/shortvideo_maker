@@ -24,6 +24,7 @@ function App() {
   const [scenesCount, setScenesCount] = useState(8);
   const [orientation, setOrientation] = useState('portrait');
   const [resolution, setResolution] = useState('1080x1920');
+  const [subtitleStyle, setSubtitleStyle] = useState('static');
   
   // Step 2: Script
   const [script, setScript] = useState('');
@@ -132,6 +133,7 @@ function App() {
       image_style: selectedStyle,
       resolution,
       scenes_count: scenesCount,
+      subtitle_style: subtitleStyle,
       scenes: scenesPreview ? scenesPreview.scenes : null
     };
     
@@ -257,6 +259,8 @@ function App() {
               setOrientation(o);
               setResolution(o === 'portrait' ? '1080x1920' : '1920x1080');
             }}
+            subtitleStyle={subtitleStyle}
+            setSubtitleStyle={setSubtitleStyle}
             nextStep={() => nextStep(2)}
             config={config}
           />
