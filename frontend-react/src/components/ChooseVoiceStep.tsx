@@ -1,14 +1,25 @@
 import React, { useState } from 'react';
 import { Mic, Heart, User } from 'lucide-react';
+import { ConfigData, ApiResponse } from '../types';
 
-const ChooseVoiceStep = ({ 
+interface ChooseVoiceStepProps {
+  config: ConfigData | null;
+  selectedVoice: string;
+  setSelectedVoice: (voice: string) => void;
+  language: string;
+  prevStep: () => void;
+  nextStep: () => void;
+  API_BASE: string;
+}
+
+const ChooseVoiceStep: React.FC<ChooseVoiceStepProps> = ({ 
   config, selectedVoice, setSelectedVoice, 
   language, prevStep, nextStep, API_BASE 
 }) => {
   
-  const [loadingVoice, setLoadingVoice] = useState(null);
+  const [loadingVoice, setLoadingVoice] = useState<string | null>(null);
 
-  const selectVoice = async (voiceId) => {
+  const selectVoice = async (voiceId: string) => {
     setSelectedVoice(voiceId);
     setLoadingVoice(voiceId);
     
@@ -22,8 +33,8 @@ const ChooseVoiceStep = ({
           voice: voiceId
         })
       });
-      const data = await response.json();
-      if (data.success) {
+      const data: ApiResponse<{ url: string }> = await response.json();
+      if (data.success && data.data) {
         const audio = new Audio(`${API_BASE}${data.data.url}`);
         audio.oncanplaythrough = () => setLoadingVoice(null);
         audio.onended = () => setLoadingVoice(null);
@@ -58,11 +69,13 @@ const ChooseVoiceStep = ({
                 {loadingVoice === voice.id ? (
                   <span className="loading-spinner !border-primary border-t-transparent !mr-0 !w-8 !h-8" />
                 ) : (
+                  // @ts-ignore - Dynamic property that might not exist in definition but expected from API
                   voice.gender === 'female' ? <Heart className="w-8 h-8" /> : <User className="w-8 h-8" />
                 )}
               </div>
               <h6 className="mb-1 font-semibold">{voice.name}</h6>
-              <small className="text-gray-500 capitalize">{voice.accent} • {voice.gender}</small>
+              {/* @ts-ignore - Dynamic property that might not exist in definition but expected from API */}
+              <small className="text-gray-500 capitalize">{voice.accent || ''} • {voice.gender || ''}</small>
             </div>
           ))}
         </div>

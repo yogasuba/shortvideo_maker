@@ -1,7 +1,21 @@
 import React from 'react';
 import { Pencil, Eye } from 'lucide-react';
+import { ScenesPreview, ApiResponse, AlertType } from '../types';
 
-const WriteScriptStep = ({ 
+interface WriteScriptStepProps {
+  script: string;
+  setScript: (script: string) => void;
+  language: string;
+  scenesCount: number;
+  setScenesPreview: (preview: ScenesPreview) => void;
+  setShowPreviewModal: (show: boolean) => void;
+  prevStep: () => void;
+  nextStep: () => void;
+  addAlert: (message: string, type: AlertType) => void;
+  API_BASE: string;
+}
+
+const WriteScriptStep: React.FC<WriteScriptStepProps> = ({ 
   script, setScript, 
   language, scenesCount, 
   setScenesPreview, setShowPreviewModal,
@@ -10,16 +24,16 @@ const WriteScriptStep = ({
   
   const scriptCount = script.length;
   
-  const examples = {
+  type ExampleType = 'ai' | 'meditation' | 'entrepreneur';
+
+  const examples: Record<ExampleType, string> = {
     ai: `Artificial intelligence is revolutionizing every industry. From healthcare diagnostics to autonomous vehicles, AI is making our lives easier and more efficient...`,
     meditation: `Meditation offers numerous benefits for both mental and physical health. Just 10 minutes of daily practice can transform your life...`,
     entrepreneur: `Starting a business begins with a great idea. But an idea alone isn't enough – execution is everything...`
   };
 
-  // Note: Full examples taken from index.html (I'll truncate here for brevity but ideally use full text)
-  const loadExample = (type) => {
-    // In actual implementation, I should use the full text from index.html
-    const fullExamples = {
+  const loadExample = (type: ExampleType) => {
+    const fullExamples: Record<ExampleType, string> = {
       ai: `Artificial intelligence is revolutionizing every industry. From healthcare diagnostics to autonomous vehicles, AI is making our lives easier and more efficient.\n\nThe key benefits include increased productivity, improved accuracy, and significant cost reduction. Machine learning algorithms can process vast amounts of data in seconds.\n\nAs technology advances, we can expect even more innovative applications. AI will help solve complex problems like climate change and disease prevention.\n\nThe future is bright for AI development. With responsible implementation, we can create a better world for everyone.`,
       meditation: `Meditation offers numerous benefits for both mental and physical health. Just 10 minutes of daily practice can transform your life.\n\nRegular meditation reduces stress and anxiety levels significantly. It helps calm the mind and improve emotional regulation.\n\nStudies show meditation increases focus and concentration. It enhances creativity and problem-solving abilities.\n\nPhysical benefits include lower blood pressure and improved sleep quality. Meditation strengthens the immune system and promotes longevity.\n\nStarting is simple: find a quiet space, sit comfortably, and focus on your breath. Consistency is more important than duration.`,
       entrepreneur: `Starting a business begins with a great idea. But an idea alone isn't enough – execution is everything.\n\nFirst, validate your concept with market research. Identify your target audience and their pain points.\n\nCreate a simple business plan outlining your goals. Focus on creating minimum viable products to test the market.\n\nBuilding a strong team is crucial for success. Surround yourself with people who complement your skills.\n\nRemember, entrepreneurship is a journey of learning. Embrace failures as opportunities to grow and improve.`
@@ -34,11 +48,11 @@ const WriteScriptStep = ({
       return;
     }
     
-    // Simulate loading state (original logic had this inside the function)
-    const originalBtnContent = document.getElementById('previewBtn')?.innerHTML;
-    if (document.getElementById('previewBtn')) {
-      document.getElementById('previewBtn').disabled = true;
-      document.getElementById('previewBtn').innerHTML = '<span class="loading-spinner"></span> Analyzing script...';
+    // Simulate loading state
+    const previewBtn = document.getElementById('previewBtn') as HTMLButtonElement | null;
+    if (previewBtn) {
+      previewBtn.disabled = true;
+      previewBtn.innerHTML = '<span class="loading-spinner"></span> Analyzing script...';
     }
 
     try {
@@ -51,19 +65,19 @@ const WriteScriptStep = ({
           language
         })
       });
-      const data = await response.json();
-      if (data.success) {
+      const data: ApiResponse<ScenesPreview> = await response.json();
+      if (data.success && data.data) {
         setScenesPreview(data.data);
         setShowPreviewModal(true);
       } else {
         throw new Error('Failed to preview script');
       }
     } catch (error) {
-      addAlert(`Error: ${error.message}`, 'error');
+      addAlert(`Error: ${(error as Error).message}`, 'error');
     } finally {
-      if (document.getElementById('previewBtn')) {
-        document.getElementById('previewBtn').disabled = false;
-        document.getElementById('previewBtn').innerHTML = '<i class="lucide-eye mr-2"></i> Preview Split Scene';
+      if (previewBtn) {
+        previewBtn.disabled = false;
+        previewBtn.innerHTML = '<i class="lucide-eye mr-2"></i> Preview Split Scene';
       }
     }
   };
@@ -100,7 +114,7 @@ const WriteScriptStep = ({
           <textarea 
             className="form-control-custom script-input h-[200px]" 
             value={script}
-            onChange={(e) => setScript(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setScript(e.target.value)}
             placeholder="Write or paste your entire script here..."
             maxLength={5000}
           />

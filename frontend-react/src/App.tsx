@@ -8,54 +8,90 @@ import WriteScriptStep from './components/WriteScriptStep';
 import ChooseVoiceStep from './components/ChooseVoiceStep';
 import GenerationProgressStep from './components/GenerationProgressStep';
 import ScenePreviewModal from './components/ScenePreviewModal';
+import CalendarView from './components/CalendarView';
+import type { 
+  ApiResponse, 
+  ConfigData, 
+  ProjectStatus, 
+  ScenesPreview,
+  Alert,
+  AlertType,
+  ViewType,
+  OrientationType,
+  SubtitleStyleType,
+  ToneType,
+  UsePersistentStateReturn
+} from './types';
 
 const API_BASE = 'http://localhost:8001';
 
-function App() {
+// Helper to persist state
+const usePersistentState = <T,>(key: string, defaultValue: T): UsePersistentStateReturn<T> => {
+  const [state, setState] = useState<T>(() => {
+    const saved = localStorage.getItem(key);
+    if (saved !== null) {
+      try {
+        return JSON.parse(saved) as T;
+      } catch {
+        return saved as T;
+      }
+    }
+    return defaultValue;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(state));
+  }, [key, state]);
+
+  return [state, setState];
+};
+
+function App(): React.JSX.Element {
   // Global State
-  const [currentStep, setCurrentStep] = useState(1);
-  const [config, setConfig] = useState(null);
-  const [alerts, setAlerts] = useState([]);
+  const [currentStep, setCurrentStep] = usePersistentState<number>('currentStep', 1);
+  const [config, setConfig] = useState<ConfigData | null>(null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   
   // Step 1: Video Details
-  const [videoTitle, setVideoTitle] = useState('');
-  const [language, setLanguage] = useState('en');
-  const [tone, setTone] = useState('neutral');
-  const [scenesCount, setScenesCount] = useState(8);
-  const [orientation, setOrientation] = useState('portrait');
-  const [resolution, setResolution] = useState('1080x1920');
-  const [subtitleStyle, setSubtitleStyle] = useState('static');
+  const [videoTitle, setVideoTitle] = usePersistentState<string>('videoTitle', '');
+  const [language, setLanguage] = usePersistentState<string>('language', 'en');
+  const [tone, setTone] = usePersistentState<ToneType>('tone', 'neutral');
+  const [scenesCount, setScenesCount] = usePersistentState<number>('scenesCount', 8);
+  const [orientation, setOrientation] = usePersistentState<OrientationType>('orientation', 'portrait');
+  const [resolution, setResolution] = usePersistentState<string>('resolution', '1080x1920');
+  const [subtitleStyle, setSubtitleStyle] = usePersistentState<SubtitleStyleType>('subtitleStyle', 'static');
   
   // Step 2: Script
-  const [script, setScript] = useState('');
-  const [scenesPreview, setScenesPreview] = useState(null);
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [script, setScript] = usePersistentState<string>('script', '');
+  const [scenesPreview, setScenesPreview] = useState<ScenesPreview | null>(null);
+  const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   
   // Step 3: Voice
-  const [selectedVoice, setSelectedVoice] = useState('');
+  const [selectedVoice, setSelectedVoice] = usePersistentState<string>('selectedVoice', '');
   
   // Step 4: Style
-  const [selectedStyle, setSelectedStyle] = useState('pexels');
+  const [selectedStyle, setSelectedStyle] = usePersistentState<string>('selectedStyle', 'pexels');
   
   // Step 5: Generation / Progress
-  const [currentProjectId, setCurrentProjectId] = useState('');
-  const [currentVideoUrl, setCurrentVideoUrl] = useState('');
-  const [progress, setProgress] = useState(0);
-  const [progressStatus, setProgressStatus] = useState('Preparing your video...');
-  const [progressDetail, setProgressDetail] = useState("We're splitting your script into scenes and generating assets.");
-  const [isCompleted, setIsCompleted] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [currentProjectId, setCurrentProjectId] = usePersistentState<string>('currentProjectId', '');
+  const [currentVideoUrl, setCurrentVideoUrl] = usePersistentState<string>('currentVideoUrl', '');
+  const [progress, setProgress] = useState<number>(0);
+  const [progressStatus, setProgressStatus] = useState<string>('Preparing your video...');
+  const [progressDetail, setProgressDetail] = useState<string>("We're splitting your script into scenes and generating assets.");
+  const [isCompleted, setIsCompleted] = usePersistentState<boolean>('isCompleted', false);
+  const [isGenerating, setIsGenerating] = usePersistentState<boolean>('isGenerating', false);
   
   // Theme
-  const [isDarkTheme, setIsDarkTheme] = useState(false);
+  const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
+  const [view, setView] = useState<ViewType>('creator'); // 'creator' or 'calendar'
 
   // Load configuration
   useEffect(() => {
-    const loadConfiguration = async () => {
+    const loadConfiguration = async (): Promise<void> => {
       try {
         const response = await fetch(`${API_BASE}/api/config`);
-        const data = await response.json();
-        if (data.success) {
+        const data: ApiResponse<ConfigData> = await response.json();
+        if (data.success && data.data) {
           setConfig(data.data);
         }
       } catch (error) {
@@ -65,7 +101,7 @@ function App() {
     loadConfiguration();
   }, []);
 
-  const addAlert = (message, type = 'info') => {
+  const addAlert = (message: string, type: AlertType = 'info'): void => {
     const id = Date.now();
     setAlerts(prev => [...prev, { id, message, type }]);
     setTimeout(() => {
@@ -73,30 +109,30 @@ function App() {
     }, 5000);
   };
 
-  const removeAlert = (id) => {
+  const removeAlert = (id: number): void => {
     setAlerts(prev => prev.filter(a => a.id !== id));
   };
 
-  const nextStep = (step) => {
+  const nextStep = (step: number): void => {
     if (!validateStep(currentStep)) return;
     setCurrentStep(step);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const prevStep = (step) => {
+  const prevStep = (step: number): void => {
     setCurrentStep(step);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const validateStep = (step) => {
+  const validateStep = (step: number): boolean => {
     if (step === 1) {
-      if (!videoTitle.trim()) {
+      if (!videoTitle?.trim()) {
         addAlert('Please enter a video title', 'error');
         return false;
       }
       return true;
     } else if (step === 2) {
-      if (!script.trim()) {
+      if (!script?.trim()) {
         addAlert('Please enter your script', 'error');
         return false;
       }
@@ -121,7 +157,7 @@ function App() {
     return true;
   };
 
-  const createVideo = async () => {
+  const createVideo = async (): Promise<void> => {
     if (!validateStep(4)) return;
     
     const requestData = {
@@ -139,6 +175,8 @@ function App() {
     
     setCurrentStep(5);
     setIsGenerating(true);
+    setIsCompleted(false);
+    setProgress(0);
     
     try {
       const response = await fetch(`${API_BASE}/api/videos/create`, {
@@ -146,49 +184,55 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData)
       });
-      const data = await response.json();
-      if (data.success) {
+      const data: ApiResponse<{ project_id: string }> = await response.json();
+      if (data.success && data.data) {
         setCurrentProjectId(data.data.project_id);
-        startProgressPolling(data.data.project_id);
       } else {
         throw new Error('Failed to start video creation');
       }
     } catch (error) {
-      addAlert(`Error: ${error.message}`, 'error');
+      addAlert(`Error: ${(error as Error).message}`, 'error');
       setCurrentStep(4);
       setIsGenerating(false);
     }
   };
 
-  const startProgressPolling = (projectId) => {
-    const interval = setInterval(async () => {
+  // Poll for progress if generating
+  useEffect(() => {
+    if (!isGenerating || !currentProjectId) return;
+
+    let intervalId = setInterval(async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/projects/${projectId}/status`);
-        const data = await response.json();
+        const response = await fetch(`${API_BASE}/api/projects/${currentProjectId}/status`);
+        const data: ApiResponse<ProjectStatus> = await response.json();
         
-        if (data.success) {
+        if (data.success && data.data) {
           const project = data.data;
           updateProgressState(project);
           
           if (project.status === 'completed') {
-            clearInterval(interval);
-            setCurrentVideoUrl(project.video_url);
+            setCurrentVideoUrl(project.video_url || '');
             setIsCompleted(true);
             setIsGenerating(false);
+            clearInterval(intervalId);
           } else if (project.status === 'failed') {
-            clearInterval(interval);
-            addAlert(`Video creation failed: ${project.error}`, 'error');
-            setCurrentStep(4);
+            const errorMessage = typeof project.error === 'string' 
+              ? project.error 
+              : project.error?.message || 'Unknown error';
+            addAlert(`Video creation failed: ${errorMessage}`, 'error');
             setIsGenerating(false);
+            clearInterval(intervalId);
           }
         }
       } catch (error) {
         console.error('Polling error:', error);
       }
     }, 2000);
-  };
 
-  const updateProgressState = (project) => {
+    return () => clearInterval(intervalId);
+  }, [isGenerating, currentProjectId]);
+
+  const updateProgressState = (project: ProjectStatus): void => {
     const p = project.progress || 0;
     setProgress(p);
     
@@ -207,7 +251,8 @@ function App() {
     }
   };
 
-  const resetForm = () => {
+  const resetForm = (): void => {
+    localStorage.clear();
     setVideoTitle('');
     setScript('');
     setLanguage('en');
@@ -227,10 +272,38 @@ function App() {
     addAlert('Ready to create another video!', 'success');
   };
 
-  const toggleTheme = () => {
+  const toggleTheme = (): void => {
     setIsDarkTheme(!isDarkTheme);
     document.body.classList.toggle('dark-theme');
   };
+
+  // Handle Facebook OAuth callback
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+      const handleFBAuth = async (): Promise<void> => {
+        try {
+          const response = await fetch(`${API_BASE}/api/facebook/callback?code=${code}`);
+          const data: ApiResponse<unknown> = await response.json();
+          if (data.success) {
+            addAlert('Facebook Page connected successfully!', 'success');
+          } else if (response.status === 500) {
+             // Silently ignore already used codes if we have logic to fetch integrations anyway
+             console.log("Code likely already used, checking integrations...");
+          } else {
+            throw new Error(data.detail || 'Authentication failed');
+          }
+        } catch (error) {
+          console.error('Facebook connection error:', error);
+        } finally {
+          // Clean up URL regardless
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      };
+      handleFBAuth();
+    }
+  }, []);
 
   return (
     <div className={isDarkTheme ? 'dark-theme' : ''}>
@@ -238,13 +311,19 @@ function App() {
         resetForm={resetForm} 
         toggleTheme={toggleTheme} 
         isDarkTheme={isDarkTheme} 
+        setView={setView}
+        isCalendarView={view === 'calendar'}
       />
       
       <div className="container-custom">
-        <StepIndicator currentStep={currentStep} />
-        <AlertContainer alerts={alerts} removeAlert={removeAlert} />
-        
-        {currentStep === 1 && (
+        {view === 'calendar' ? (
+          <CalendarView API_BASE={API_BASE} setView={setView} />
+        ) : (
+          <>
+            <StepIndicator currentStep={currentStep} />
+            <AlertContainer alerts={alerts} removeAlert={removeAlert} />
+            
+            {currentStep === 1 && (
           <VideoDetailsStep 
             videoTitle={videoTitle}
             setVideoTitle={setVideoTitle}
@@ -255,7 +334,7 @@ function App() {
             scenesCount={scenesCount}
             setScenesCount={setScenesCount}
             orientation={orientation}
-            setOrientation={(o) => {
+            setOrientation={(o: OrientationType) => {
               setOrientation(o);
               setResolution(o === 'portrait' ? '1080x1920' : '1920x1080');
             }}
@@ -311,11 +390,14 @@ function App() {
             isCompleted={isCompleted}
             videoTitle={videoTitle}
             videoUrl={currentVideoUrl}
+            projectId={currentProjectId}
             orientation={orientation}
             resetForm={resetForm}
             API_BASE={API_BASE}
             addAlert={addAlert}
           />
+        )}
+          </>
         )}
       </div>
 
@@ -335,6 +417,5 @@ function App() {
     </div>
   );
 }
-
 
 export default App;

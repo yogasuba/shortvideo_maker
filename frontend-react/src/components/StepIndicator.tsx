@@ -1,6 +1,10 @@
 import React from 'react';
 
-const StepIndicator = ({ currentStep }) => {
+interface StepIndicatorProps {
+  currentStep: number;
+}
+
+const StepIndicator: React.FC<StepIndicatorProps> = ({ currentStep }) => {
   const steps = [
     { id: 1, label: 'Video Details' },
     { id: 2, label: 'Write Script' },

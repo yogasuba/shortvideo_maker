@@ -1,7 +1,13 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { Alert } from '../types';
 
-const AlertContainer = ({ alerts, removeAlert }) => {
+interface AlertContainerProps {
+  alerts: Alert[];
+  removeAlert: (id: number) => void;
+}
+
+const AlertContainer: React.FC<AlertContainerProps> = ({ alerts, removeAlert }) => {
   return (
     <div className="mb-4 space-y-2">
       {alerts.map((alert) => (

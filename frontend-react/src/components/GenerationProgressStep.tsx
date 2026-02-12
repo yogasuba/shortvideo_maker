@@ -1,19 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Loader2, CheckCircle, Download, PlusCircle } from 'lucide-react';
+import FacebookShare from './FacebookShare';
+import { OrientationType, AlertType } from '../types';
 
-const GenerationProgressStep = ({ 
+interface GenerationProgressStepProps {
+  progress: number;
+  progressStatus: string;
+  progressDetail: string;
+  isCompleted: boolean;
+  videoTitle: string;
+  videoUrl: string;
+  projectId: string;
+  orientation: OrientationType;
+  resetForm: () => void;
+  API_BASE: string;
+  addAlert: (message: string, type: AlertType) => void;
+}
+
+const GenerationProgressStep: React.FC<GenerationProgressStepProps> = ({ 
   progress, 
   progressStatus, 
   progressDetail, 
   isCompleted,
   videoTitle,
   videoUrl,
+  projectId,
   orientation,
   resetForm,
   API_BASE,
   addAlert
 }) => {
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
 
   const downloadVideo = async () => {
     if (!videoUrl) return;
@@ -79,7 +96,7 @@ const GenerationProgressStep = ({
               </video>
             </div>
             
-            <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
+            <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-8">
               <button 
                 className="btn-primary-custom flex items-center justify-center w-full sm:w-auto"
                 onClick={downloadVideo}
@@ -99,6 +116,14 @@ const GenerationProgressStep = ({
                 <PlusCircle className="mr-2 w-5 h-5" /> Create Another
               </button>
             </div>
+
+            <FacebookShare 
+              projectId={projectId}
+              videoUrl={videoUrl}
+              videoTitle={videoTitle}
+              API_BASE={API_BASE}
+              addAlert={addAlert}
+            />
           </div>
         )}
       </div>

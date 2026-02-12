@@ -1,7 +1,25 @@
 import React from 'react';
 import { Settings, Smartphone, Monitor } from 'lucide-react';
+import { ConfigData, OrientationType, SubtitleStyleType, ToneType } from '../types';
 
-const VideoDetailsStep = ({ 
+interface VideoDetailsStepProps {
+  videoTitle: string;
+  setVideoTitle: (title: string) => void;
+  language: string;
+  setLanguage: (lang: string) => void;
+  tone: ToneType;
+  setTone: (tone: ToneType) => void;
+  scenesCount: number;
+  setScenesCount: (count: number) => void;
+  orientation: OrientationType;
+  setOrientation: (orientation: OrientationType) => void;
+  subtitleStyle: SubtitleStyleType;
+  setSubtitleStyle: (style: SubtitleStyleType) => void;
+  nextStep: () => void;
+  config: ConfigData | null;
+}
+
+const VideoDetailsStep: React.FC<VideoDetailsStepProps> = ({ 
   videoTitle, setVideoTitle, 
   language, setLanguage, 
   tone, setTone, 
@@ -12,6 +30,15 @@ const VideoDetailsStep = ({
 }) => {
   
   const titleCount = videoTitle.length;
+
+  const getLanguageName = (code: string): string => {
+    const langNames: Record<string, string> = {
+      'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+      'it': 'Italian', 'pt': 'Portuguese', 'hi': 'Hindi', 'ar': 'Arabic',
+      'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ta': 'Tamil'
+    };
+    return langNames[code] || code.toUpperCase();
+  };
   
   return (
     <div className="card-custom">
@@ -26,7 +53,7 @@ const VideoDetailsStep = ({
             type="text" 
             className="form-control-custom" 
             value={videoTitle}
-            onChange={(e) => setVideoTitle(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVideoTitle(e.target.value)}
             placeholder="Enter a title for your video" 
             maxLength={100}
           />
@@ -42,7 +69,7 @@ const VideoDetailsStep = ({
               className="form-control-custom appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]"
               style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e")` }}
               value={language}
-              onChange={(e) => setLanguage(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLanguage(e.target.value)}
             >
               {config?.languages?.map((lang) => (
                 <option key={lang} value={lang}>
@@ -62,7 +89,7 @@ const VideoDetailsStep = ({
               className="form-control-custom appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]"
               style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e")` }}
               value={tone}
-              onChange={(e) => setTone(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setTone(e.target.value as ToneType)}
             >
               <option value="neutral">Neutral</option>
               <option value="professional">Professional</option>
@@ -83,7 +110,7 @@ const VideoDetailsStep = ({
               className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary" 
               min="4" max="16" 
               value={scenesCount}
-              onChange={(e) => setScenesCount(parseInt(e.target.value))}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setScenesCount(parseInt(e.target.value))}
             />
           </div>
           <div className="flex justify-between text-xs text-gray-500 px-1">
@@ -125,7 +152,7 @@ const VideoDetailsStep = ({
             className="form-control-custom appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]"
             style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e")` }}
             value={subtitleStyle}
-            onChange={(e) => setSubtitleStyle(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSubtitleStyle(e.target.value as SubtitleStyleType)}
           >
             <option value="static">Static (Default)</option>
             <option value="scroll_up">Scroll Up (Movie Credits)</option>
@@ -144,15 +171,6 @@ const VideoDetailsStep = ({
       </div>
     </div>
   );
-};
-
-const getLanguageName = (code) => {
-  const langNames = {
-    'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
-    'it': 'Italian', 'pt': 'Portuguese', 'hi': 'Hindi', 'ar': 'Arabic',
-    'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ta': 'Tamil'
-  };
-  return langNames[code] || code.toUpperCase();
 };
 
 export default VideoDetailsStep;

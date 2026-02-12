@@ -3,7 +3,7 @@ import json
 import uuid
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import logging
@@ -11,14 +11,20 @@ import math
 from PIL import ImageEnhance
 import shutil
 import unicodedata
+from dotenv import load_dotenv
+
+# Load environment variables FIRST
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # FastAPI
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
+from sqlalchemy.orm import Session
 
 # Media processing
 from gtts import gTTS
@@ -44,12 +50,12 @@ from exceptions import (
     VideoConcatenationError
 )
 
-# Load environment variables
-env_path = Path(__file__).parent / ".env"
-print(f"DEBUG: Looking for .env at: {env_path}")
-if env_path.exists():
-    print(f"DEBUG: .env exists. Content length: {len(env_path.read_text())}")
-load_dotenv(dotenv_path=env_path)
+# New Integrations
+from database import init_db, get_db, Integration, ScheduledPost
+from facebook_manager import facebook_manager
+from scheduler import start_scheduler
+
+# Load environment variables (Moved to top)
 
 # Configure logging
 logging.basicConfig(
@@ -1692,16 +1698,26 @@ class VideoGenerator:
                 raise VideoConcatenationError("No valid videos to concatenate after filtering")
             
             if use_demuxer:
-                logging.info(f"Using Concat Demuxer for {len(valid_videos)} videos (ASS Subtitles)...")
-                return await self._concatenate_with_demuxer(valid_videos, video_id)
+                logging.info(f"Using Concat Demuxer (Preferred) for {len(valid_videos)} videos...")
+                try:
+                    return await self._concatenate_with_demuxer(valid_videos, video_id)
+                except Exception as e:
+                    logging.warning(f"Concat demuxer failed: {e}. Falling back to filter complex...")
+                    return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
             else:
-                logging.info(f"Using Filter Complex for {len(valid_videos)} videos (Standard)...")
-                return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+                logging.info(f"Using Filter Complex (Standard) for {len(valid_videos)} videos...")
+                try:
+                    return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+                except Exception as e:
+                    logging.warning(f"Filter complex failed (likely code 4294967274). Error: {e}")
+                    logging.info("Falling back to Concat Demuxer...")
+                    return await self._concatenate_with_demuxer(valid_videos, video_id)
                 
         except Exception as e:
             if isinstance(e, VideoPipelineError): raise e
             logging.error(f"Video concatenation failed: {e}")
             raise VideoConcatenationError(f"Concatenation failed: {e}")
+
 
     async def _concatenate_with_demuxer(self, video_files: List[str], video_id: str) -> str:
         """
@@ -1886,6 +1902,13 @@ async def get_config():
             "min_scenes": 4
         }
     }
+
+# Lifecycle events
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+    start_scheduler()
+    logging.info("Backend services (DB & Scheduler) initialized.")
 
 @app.post("/api/videos/create")
 async def create_video(request: VideoCreateRequest, background_tasks: BackgroundTasks):
@@ -2090,7 +2113,171 @@ async def upload_scene_image(file: UploadFile = File(...)):
         logging.error(f"Failed to upload scene image: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ========== FACEBOOK ROUTES ==========
+
+@app.get("/api/facebook/auth-url")
+async def get_fb_auth_url():
+    """Generate Facebook login URL"""
+    state = uuid.uuid4().hex[:10]
+    # In a real app, you'd store state in session/DB to verify in callback
+    redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/facebook-callback"
+    url = facebook_manager.get_auth_url(redirect_uri, state)
+    return {"success": True, "url": url}
+
+@app.get("/api/facebook/callback")
+async def fb_callback(code: str, db: Session = Depends(get_db)):
+    """Handle Facebook OAuth callback"""
+    try:
+        redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/facebook-callback"
+        token_data = facebook_manager.exchange_code_for_token(code, redirect_uri)
+        user_token = token_data.get("access_token")
+        
+        # Fetch pages the user can manage
+        pages = facebook_manager.get_pages(user_token)
+        
+        # We store them in the DB.
+        stored_pages = []
+        for page in pages:
+            integration = db.query(Integration).filter(Integration.internal_id == page["id"]).first()
+            if not integration:
+                integration = Integration(
+                    id=f"integration_{uuid.uuid4().hex[:8]}",
+                    internal_id=page["id"],
+                    name=page["name"],
+                    picture=page.get("picture", {}).get("data", {}).get("url"),
+                    access_token=page["access_token"],
+                    provider="facebook"
+                )
+                db.add(integration)
+            else:
+                integration.access_token = page["access_token"]
+                integration.name = page["name"]
+                integration.picture = page.get("picture", {}).get("data", {}).get("url")
+            stored_pages.append(integration)
+        
+        db.commit()
+        return {"success": True, "pages": pages}
+    except Exception as e:
+        logging.error(f"FB Callback Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/facebook/integrations")
+async def get_fb_integrations(db: Session = Depends(get_db)):
+    """List connected Facebook pages"""
+    integrations = db.query(Integration).filter(Integration.is_active == True).all()
+    # Serialize for JSON
+    data = []
+    for integration in integrations:
+        data.append({
+            "id": integration.id,
+            "name": integration.name,
+            "internal_id": integration.internal_id,
+            "picture": integration.picture,
+            "provider": integration.provider
+        })
+    return {"success": True, "data": data}
+
+@app.post("/api/facebook/post-now")
+async def fb_post_now(
+    project_id: str = Form(...),
+    integration_id: str = Form(...),
+    caption: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    """Immediately post a video to Facebook"""
+    project = video_gen.projects.get(project_id)
+    if not project or project.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Project not found or video not ready")
+    
+    integration = db.query(Integration).filter(Integration.id == integration_id).first()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration (Page) not found")
+    
+    video_url = project.get("video_url")
+    video_path = str(Config.STORAGE_DIR / video_url.replace('/storage/', ''))
+    
+    try:
+        result = facebook_manager.post_video(
+            page_id=integration.internal_id,
+            page_access_token=integration.access_token,
+            video_path=video_path,
+            title=project.get("title", "Generated Video"),
+            description=caption or project.get("title", "")
+        )
+        return {"success": True, "fb_post_id": result.get("id")}
+    except Exception as e:
+        logging.error(f"FB Post Now Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/facebook/schedule")
+async def fb_schedule(
+    project_id: str = Form(...),
+    integration_id: str = Form(...),
+    schedule_time: str = Form(...), # ISO format
+    caption: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    """Schedule a video to be posted later"""
+    project = video_gen.projects.get(project_id)
+    if not project or project.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Project not found or video not ready")
+    
+    integration = db.query(Integration).filter(Integration.id == integration_id).first()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration (Page) not found")
+    
+    try:
+        st_dt = datetime.fromisoformat(schedule_time.replace('Z', '+00:00'))
+        # Convert to UTC naive for storage
+        utc_dt = st_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        
+        if st_dt <= datetime.now(st_dt.tzinfo):
+            raise ValueError("Scheduled time must be in the future")
+
+        video_url = project.get("video_url")
+        video_path = str(Config.STORAGE_DIR / video_url.replace('/storage/', ''))
+
+        post = ScheduledPost(
+            id=f"post_{uuid.uuid4().hex[:8]}",
+            project_id=project_id,
+            integration_id=integration_id,
+            video_path=video_path,
+            caption=caption or project.get("title", ""),
+            schedule_time=utc_dt,
+            status="scheduled"
+        )
+        db.add(post)
+        db.commit()
+        return {"success": True, "post_id": post.id}
+    except Exception as e:
+        logging.error(f"FB Schedule Error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/facebook/scheduled-posts")
+async def get_scheduled_posts(db: Session = Depends(get_db)):
+    """Fetch all scheduled and recently posted videos"""
+    try:
+        posts = db.query(ScheduledPost).order_by(ScheduledPost.schedule_time.desc()).all()
+        data = []
+        for post in posts:
+            data.append({
+                "id": post.id,
+                "project_id": post.project_id,
+                "integration_name": post.integration.name if post.integration else "Unknown",
+                "integration_picture": post.integration.picture if post.integration else None,
+                "caption": post.caption,
+                "schedule_time": post.schedule_time.isoformat() + 'Z' if post.schedule_time else None,
+                "status": post.status,
+                "error_message": post.error_message,
+                "fb_permalink": post.fb_permalink
+            })
+        return {"success": True, "data": data}
+    except Exception as e:
+        logging.error(f"Error fetching scheduled posts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ========== RUN SERVER ==========
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8001))
     

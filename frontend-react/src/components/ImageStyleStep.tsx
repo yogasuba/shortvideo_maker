@@ -1,12 +1,21 @@
 import React from 'react';
 import { Palette, Image, Film } from 'lucide-react';
+import { ConfigData } from '../types';
 
-const ImageStyleStep = ({ 
+interface ImageStyleStepProps {
+  config: ConfigData | null;
+  selectedStyle: string;
+  setSelectedStyle: (style: string) => void;
+  prevStep: () => void;
+  createVideo: () => void;
+}
+
+const ImageStyleStep: React.FC<ImageStyleStepProps> = ({ 
   config, selectedStyle, setSelectedStyle, prevStep, createVideo 
 }) => {
   
-  const getStyleIcon = (styleId) => {
-    const icons = {
+  const getStyleIcon = (styleId: string): React.JSX.Element => {
+    const icons: Record<string, React.JSX.Element> = {
       'pexels': <Image className="w-8 h-8" />
     };
     return icons[styleId] || <Image className="w-8 h-8" />;
