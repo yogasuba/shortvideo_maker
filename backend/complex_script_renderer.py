@@ -342,13 +342,17 @@ class ComplexScriptRenderer:
         # Windows path handling for ASS files
         font_path = str(font_path).replace('\\', '/')
         
+        # Alignment mapping: ASS Alignment 2 is Bottom Center, 5 is Middle Center
+        # We use 'style' parameter which now contains either 'bottom', 'center' or 'scroll_up'
+        ass_alignment = 5 if style == "center" else 2
+        
         # Style Definition for High Contrast/Readability:
         # BorderStyle=3 (Opaque Box)
         # BackColour=&H60000000 (Semi-transparent Black: 60 alpha)
         # Outline=2 (Box padding effectively)
         # Shadow=0
-        # Alignment=1 (Bottom Left) -> CHANGED FROM 2 (Center)
-        # MarginL=40 (Left padding) -> CHANGED FROM 10
+        # Alignment=2 (Bottom Center) OR 5 (Middle Center)
+        # MarginL=40 (Left padding)
         style_line = (
             f"Style: Default,"
             f"{os.path.basename(font_path)},"
@@ -360,7 +364,7 @@ class ComplexScriptRenderer:
             f"0,0,0,0,"           # Bold, Italic, Underline, StrikeOut
             f"100,100,0,0,"       # ScaleX, ScaleY, Spacing, Angle
             f"3,2,0,"             # BorderStyle=Box, Outline padding, Shadow=0
-            f"1,"                 # Alignment = Bottom Left
+            f"{ass_alignment},"   # Alignment
             f"40,40,{margin_v},"  # MarginL, MarginR, MarginV
             f"1"
         )

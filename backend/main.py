@@ -240,10 +240,15 @@ class ScriptProcessor:
                     else:
                         scene_text = scene_text[:117] + "..."
                 
+                # Estimate duration based on word count (approx 2.5 words per second)
+                word_count = len(scene_text.split())
+                estimated_duration = max(3, min(math.ceil(word_count / 2.5), 10))
+                
                 scenes.append({
                     "scene_number": scene_counter,
                     "text": scene_text,
-                    "duration": 5,
+                    "duration": estimated_duration,
+                    "duration_is_auto": True,
                     "visual_prompt": f"Scene {scene_counter}: {scene_text}"  # More descriptive for Pexels
                 })
                 
@@ -568,6 +573,39 @@ class VideoGenerator:
             logging.error(f"ElevenLabs audio generation error: {e}")
             return {"url": "", "duration": 5.0, "path": ""}
     
+    async def _create_silent_audio(self, duration: float) -> Dict:
+        """Create a silent audio file for the specified duration"""
+        try:
+            audio_id = f"silent_{uuid.uuid4().hex[:8]}"
+            audio_file = Config.STORAGE_DIR / "temp" / f"{audio_id}.mp3"
+            audio_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Use ffmpeg to generate silence
+            cmd = [
+                Config.get_ffmpeg(),
+                "-f", "lavfi",
+                "-i", f"anullsrc=r=44100:cl=mono",
+                "-t", str(duration),
+                "-q:a", "9",
+                "-acodec", "libmp3lame",
+                "-y",
+                str(audio_file)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0 and audio_file.exists():
+                return {
+                    "url": f"/storage/temp/{audio_id}.mp3",
+                    "duration": duration,
+                    "path": str(audio_file)
+                }
+            
+            return {"url": "", "duration": duration, "path": ""}
+        except Exception as e:
+            logging.error(f"Silent audio creation failed: {e}")
+            return {"url": "", "duration": duration, "path": ""}
+
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get audio duration using ffprobe"""
         try:
@@ -1020,15 +1058,31 @@ class VideoGenerator:
             # Subtitle should be narration.
             subtitle_text = scene.get('voice_over', scene.get('text', ''))
             
+            # Determine final duration
+            # Priority:
+            # 1. Manual duration (if duration_is_auto is False/missing but value changed)
+            # 2. Actual audio duration (the safest for narration)
+            manual_duration = scene.get("duration")
+            is_auto = scene.get("duration_is_auto", False)
+            
+            # If it's auto-estimated, we prefer the actual audio duration to avoid cuts
+            # If the user changed it manually, we respect their choice
+            final_duration = audio_info["duration"] if is_auto else manual_duration
+            
+            logging.info(f"Duration logic: is_auto={is_auto}, manual={manual_duration}, audio={audio_info['duration']} -> final={final_duration}")
+
             scene_path = await self._create_scene_with_simple_text(
                 visual_info["path"], 
                 audio_info["path"], 
                 scene_file, 
-                audio_info["duration"],
-                subtitle_text,
+                final_duration,
+                subtitle_text if not scene.get("show_image_only", False) else "",
                 resolution,
                 language,
-                subtitle_style=subtitle_style
+                subtitle_style=subtitle_style,
+                subtitle_position=scene.get("subtitle_position", "bottom"),
+                subtitle_size=scene.get("subtitle_size", 60),
+                rotation=scene.get("rotation", 0)
             )
             
             if scene_path:
@@ -1082,7 +1136,10 @@ class VideoGenerator:
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
                                            text: str, resolution: str = "1080x1920", language: str = "en",
-                                           subtitle_style: str = "static") -> Optional[str]:
+                                           subtitle_style: str = "static", 
+                                           subtitle_position: str = "bottom",
+                                           subtitle_size: int = 60,
+                                           rotation: int = 0) -> Optional[str]:
         """Create scene video with proper complex script handling
         
         CRITICAL PIPELINE CHANGE:
@@ -1100,7 +1157,10 @@ class VideoGenerator:
             if language not in renderer.COMPLEX_SCRIPTS and subtitle_style == "static":
                 # FAST PATH: Use PIL for simple scripts (English, etc.) without animation
                 return await self._create_scene_with_pil_fallback(
-                    image_path, audio_path, output_path, duration, text, resolution, language
+                    image_path, audio_path, output_path, duration, text, resolution, language,
+                    subtitle_position=subtitle_position,
+                    subtitle_size=subtitle_size,
+                    rotation=rotation
                 )
             
             # === COMPLEX SCRIPT PIPELINE (ASS/LIBASS) ===
@@ -1115,7 +1175,7 @@ class VideoGenerator:
             
             # 2. Wrap Text
             max_width_lines = 3000  # Set high to let Libass handle accurate wrapping via margins
-            font_size = 60  # Increased font size for readability
+            font_size = subtitle_size  # Use customized font size
             
             # --- DYNAMIC POSITIONING ---
             try:
@@ -1139,7 +1199,11 @@ class VideoGenerator:
                 
                 bottom_bar_height = (vid_h - scaled_h) // 2
                 inner_margin = 80  # Padding inside the image
-                margin_v = bottom_bar_height + inner_margin
+                
+                if subtitle_position == 'center':
+                    margin_v = vid_h // 2
+                else: # bottom
+                    margin_v = bottom_bar_height + inner_margin
                 
                 logging.info(f"Layout Calc: VidH={vid_h}, ImgH={scaled_h}, BottomBar={bottom_bar_height}, MarginV={margin_v}")
             except Exception as e:
@@ -1180,7 +1244,9 @@ class VideoGenerator:
                 "-c:v", "libx264",
                 "-c:a", "aac",
                 "-pix_fmt", "yuv420p",
-                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-vf", f"rotate={rotation}*PI/180:ow='max(iw,ih)':oh='max(iw,ih)',"
+                       f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-af", f"atrim=0:{duration},apad=whole_dur={duration}",
                 "-t", str(duration),
                 "-shortest",
                 "-y",
@@ -1223,7 +1289,10 @@ class VideoGenerator:
     
     async def _create_scene_with_pil_fallback(self, image_path: str, audio_path: str, 
                                             output_path: Path, duration: float, 
-                                            text: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
+                                            text: str, resolution: str = "1080x1920", language: str = "en",
+                                            subtitle_position: str = "bottom",
+                                            subtitle_size: int = 60,
+                                            rotation: int = 0) -> Optional[str]:
         """Fallback PIL-based text rendering for simple scripts ONLY
         
         WARNING: Complex scripts (Tamil, Hindi, etc.) MUST NOT use PIL rendering.
@@ -1313,11 +1382,21 @@ class VideoGenerator:
             
             y_start = img.height - total_height - (img.height * 0.15)
             
+            # Background image preparation with rotation
+            if rotation != 0:
+                img = img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+            
             # Draw semi-transparent background
             padding = 15
             box_fill = (0, 0, 0, 160)
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
             overlay_draw = ImageDraw.Draw(overlay)
+            
+            # Calculate position
+            if subtitle_position == 'center':
+                y_start = (img.height - total_height) // 2
+            else: # bottom
+                y_start = img.height - total_height - (img.height * 0.15)
             
             for i, line in enumerate(lines):
                 line_bbox = overlay_draw.textbbox((0, 0), line, font=font)
@@ -1356,6 +1435,7 @@ class VideoGenerator:
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-af", f"atrim=0:{duration},apad=whole_dur={duration}",
                 "-t", str(duration),
                 "-shortest",
                 "-y",
@@ -1588,8 +1668,15 @@ class VideoGenerator:
                 
                 # Generate audio
                 # Use voice_over if available, otherwise fallback to text
-                voice_text = scene.get("voice_over", scene["text"])
-                audio_info = await self.generate_audio(voice_text, request.language, request.voice)
+                show_image_only = scene.get("show_image_only", False)
+                voice_text = "" if show_image_only else scene.get("voice_over", scene["text"])
+                
+                if voice_text:
+                    audio_info = await self.generate_audio(voice_text, request.language, request.voice)
+                else:
+                    # Create silent audio for the specified duration
+                    audio_info = await self._create_silent_audio(scene.get("duration", 5.0))
+                
                 if not audio_info["path"]:
                     logging.error(f"Failed to generate audio for scene {i+1}")
                     continue

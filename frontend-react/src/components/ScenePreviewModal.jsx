@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, Plus, Loader2 } from 'lucide-react';
+import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, Plus, Loader2, RotateCw, Type, AlignCenter, Eye, EyeOff, Settings2 } from 'lucide-react';
 
 const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BASE, addAlert }) => {
   const [editingIndex, setEditingIndex] = useState(null);
@@ -84,6 +84,18 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
     setScenesPreview({ ...data, scenes: newScenes });
   };
 
+  const updateSceneConfig = (index, updates) => {
+    const newScenes = [...data.scenes];
+    newScenes[index] = { ...newScenes[index], ...updates };
+    setScenesPreview({ ...data, scenes: newScenes });
+  };
+
+  const rotateScene = (index) => {
+    const currentRotation = data.scenes[index].rotation || 0;
+    const nextRotation = (currentRotation + 90) % 360;
+    updateSceneConfig(index, { rotation: nextRotation });
+  };
+
   return (
     <div className="fixed inset-0 z-[1050] flex items-center justify-center bg-black/50 p-4">
       <div className="bg-white rounded-[15px] w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
@@ -131,7 +143,7 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                       )}
                     </div>
                     
-                    <div className="mb-4">
+                    <div className={`mb-4 transition-all duration-300 ${scene.show_image_only ? 'opacity-30' : 'opacity-100'}`}>
                       <label className="block text-[0.75rem] font-bold text-gray-400 mb-1 uppercase tracking-wider">Voice Over (Narration)</label>
                       {editingIndex === index ? (
                         <textarea 
@@ -139,6 +151,7 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                           value={editVoiceText}
                           onChange={(e) => setEditVoiceText(e.target.value)}
                           rows={3}
+                          disabled={scene.show_image_only}
                         />
                       ) : (
                         <div className="scene-text p-2 bg-blue-50/50 rounded border-l-3 border-blue-400 italic">
@@ -146,49 +159,173 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                         </div>
                       )}
                     </div>
+
+                    {/* Enhanced Controls */}
+                    <div className="bg-gray-50/80 p-3 rounded-lg border border-gray-100 mb-4">
+                      <div className="flex items-center gap-2 mb-3 text-primary text-[0.75rem] font-bold uppercase tracking-wider">
+                        <Settings2 className="w-3 h-3" /> Scene Settings
+                      </div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Subtitle Controls */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
+                              <AlignCenter className="w-3 h-3" /> Position
+                            </span>
+                            <div className="flex bg-gray-200 p-0.5 rounded-md">
+                              <button 
+                                className={`px-2 py-0.5 text-[0.7rem] rounded ${(!scene.subtitle_position || scene.subtitle_position === 'bottom') ? 'bg-white shadow-sm font-bold' : ''}`}
+                                onClick={() => updateSceneConfig(index, { subtitle_position: 'bottom' })}
+                                disabled={scene.show_image_only}
+                              >
+                                Bottom
+                              </button>
+                              <button 
+                                className={`px-2 py-0.5 text-[0.7rem] rounded ${scene.subtitle_position === 'center' ? 'bg-white shadow-sm font-bold' : ''}`}
+                                onClick={() => updateSceneConfig(index, { subtitle_position: 'center' })}
+                                disabled={scene.show_image_only}
+                              >
+                                Center
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
+                              <Type className="w-3 h-3" /> Text Size
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="range" 
+                                min="20" 
+                                max="120" 
+                                value={scene.subtitle_size || 60}
+                                onChange={(e) => updateSceneConfig(index, { subtitle_size: parseInt(e.target.value) })}
+                                className="w-20 accent-primary"
+                                disabled={scene.show_image_only}
+                              />
+                              <span className="text-[0.7rem] font-bold text-primary w-6">{scene.subtitle_size || 60}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* General Controls */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
+                              <Eye className="w-3 h-3" /> Visibility
+                            </span>
+                            <button 
+                              className={`flex items-center gap-1 px-2 py-1 rounded text-[0.7rem] font-bold transition-colors ${scene.show_image_only ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}
+                              onClick={() => updateSceneConfig(index, { show_image_only: !scene.show_image_only })}
+                            >
+                              {scene.show_image_only ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                              {scene.show_image_only ? 'Image Only' : 'Normal'}
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> Duration
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <input 
+                                type="number" 
+                                value={scene.duration}
+                                onChange={(e) => updateSceneConfig(index, { duration: parseFloat(e.target.value) || 1, duration_is_auto: false })}
+                                className="w-12 p-0.5 text-[0.75rem] border rounded text-center font-bold"
+                                min="1"
+                                max="30"
+                                step="0.5"
+                              />
+                              <span className="text-[0.7rem] text-gray-400">sec</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     
                     <div className="mt-3 pt-3 border-t border-gray-100">
-                      {scene.custom_image_url && (
-                        <div className="mb-2 relative inline-block">
-                          <img 
-                            src={`${API_BASE}${scene.custom_image_url}`} 
-                            alt="Scene image" 
-                            className="rounded shadow-sm max-h-[120px] w-auto object-cover"
-                          />
-                          <button 
-                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600"
-                            onClick={() => removeSceneImage(index)}
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-                      
-                      <div className="flex items-center gap-3">
-                        <div className="flex-grow max-w-[200px]">
-                          <input 
-                            type="file" 
-                            id={`file-${index}`} 
-                            className="hidden" 
-                            accept="image/*"
-                            onChange={(e) => uploadSceneImage(index, e.target.files[0])}
-                          />
-                          <button 
-                            className="w-full px-4 py-2 text-sm border-2 border-gray-200 rounded-lg text-gray-600 font-semibold flex items-center justify-center hover:bg-gray-50 transition-colors"
+                      <div className="flex items-start gap-4">
+                        {scene.custom_image_url && (
+                          <div className="relative inline-block group">
+                            <img 
+                              src={`${API_BASE}${scene.custom_image_url}`} 
+                              alt="Scene image" 
+                              className="rounded shadow-sm max-h-[140px] w-auto object-cover transition-transform duration-300"
+                              style={{ transform: `rotate(${scene.rotation || 0}deg)` }}
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded">
+                               <button 
+                                 className="p-2 bg-white/20 hover:bg-white/40 text-white rounded-full transition-colors"
+                                 onClick={() => rotateScene(index)}
+                                 title="Rotate Image"
+                               >
+                                 <RotateCw className="w-4 h-4" />
+                               </button>
+                            </div>
+                            <button 
+                              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600"
+                              onClick={() => removeSceneImage(index)}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                        
+                        {!scene.custom_image_url && (
+                          <div 
+                            className="w-32 h-20 bg-gray-100 rounded border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 hover:bg-gray-200 transition-colors cursor-pointer overflow-hidden"
                             onClick={() => document.getElementById(`file-${index}`).click()}
-                            disabled={uploadingIndex === index}
                           >
-                            {uploadingIndex === index ? (
-                              <Loader2 className="animate-spin w-4 h-4 mr-2" />
-                            ) : (
-                              <Plus className="w-4 h-4 mr-2" />
-                            )}
-                            {scene.custom_image_url ? 'Change Image' : 'Upload Image'}
-                          </button>
+                            <ImageIcon className="w-6 h-6 mb-1" style={{ transform: `rotate(${scene.rotation || 0}deg)` }} />
+                            <span className="text-[0.6rem] font-bold uppercase">No Image</span>
+                            <button 
+                              className="absolute p-1 bg-primary text-white rounded-full -bottom-1 -right-1 shadow-sm"
+                              onClick={(e) => { e.stopPropagation(); rotateScene(index); }}
+                            >
+                              <RotateCw className="w-2 h-2" />
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="flex-grow">
+                          <div className="flex items-center gap-3">
+                            <div className="flex-grow max-w-[200px]">
+                              <input 
+                                type="file" 
+                                id={`file-${index}`} 
+                                className="hidden" 
+                                accept="image/*"
+                                onChange={(e) => uploadSceneImage(index, e.target.files[0])}
+                              />
+                              <button 
+                                className="w-full px-4 py-2 text-sm border-2 border-gray-200 rounded-lg text-gray-600 font-semibold flex items-center justify-center hover:bg-gray-50 transition-colors"
+                                onClick={() => document.getElementById(`file-${index}`).click()}
+                                disabled={uploadingIndex === index}
+                              >
+                                {uploadingIndex === index ? (
+                                  <Loader2 className="animate-spin w-4 h-4 mr-2" />
+                                ) : (
+                                  <Plus className="w-4 h-4 mr-2" />
+                                )}
+                                {scene.custom_image_url ? 'Change Image' : 'Upload Image'}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                             <button 
+                               className="flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-[0.7rem] font-bold text-gray-600 transition-colors"
+                               onClick={() => rotateScene(index)}
+                             >
+                               <RotateCw className="w-3 h-3" /> Rotate {scene.rotation || 0}°
+                             </button>
+                             <span className="text-[0.7rem] text-gray-400">
+                               {scene.custom_image_url ? 'Custom image loaded' : 'Uses Pexels/AI if empty'}
+                             </span>
+                          </div>
                         </div>
-                        <span className="text-[0.7rem] text-gray-400">
-                          {scene.custom_image_url ? 'Custom image loaded' : 'Uses Pexels/AI if empty'}
-                        </span>
                       </div>
                     </div>
 
