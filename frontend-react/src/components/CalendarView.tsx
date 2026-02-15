@@ -4,12 +4,12 @@ import {
   ChevronLeft, 
   ChevronRight, 
   Clock, 
-  Facebook, 
+  Share2, 
   ExternalLink,
   AlertCircle,
   X
 } from 'lucide-react';
-import { ScheduledPost, ViewType, ApiResponse } from '../types';
+import { ScheduledPost, ViewType, ApiResponse, PostizIntegration } from '../types';
 
 interface CalendarViewProps {
   API_BASE: string;
@@ -19,23 +19,36 @@ interface CalendarViewProps {
 const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
+  const [integrations, setIntegrations] = useState<Record<string, PostizIntegration>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedPost, setSelectedPost] = useState<ScheduledPost | null>(null);
 
   useEffect(() => {
-    fetchScheduledPosts();
+    fetchData();
   }, []);
 
-  const fetchScheduledPosts = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const response = await fetch(`${API_BASE}/api/facebook/scheduled-posts`);
-      const data: ApiResponse<ScheduledPost[]> = await response.json();
-      if (data.success && data.data) {
-        setPosts(data.data);
+      // Fetch Posts
+      const postsResp = await fetch(`${API_BASE}/api/scheduled-posts`);
+      const postsData: ApiResponse<ScheduledPost[]> = await postsResp.json();
+      
+      // Fetch Integrations for mapping
+      const intsResp = await fetch(`${API_BASE}/api/postiz/integrations`);
+      const intsData: ApiResponse<PostizIntegration[]> = await intsResp.json();
+
+      if (intsData.success && intsData.data) {
+        const intMap: Record<string, PostizIntegration> = {};
+        intsData.data.forEach(i => intMap[i.id] = i);
+        setIntegrations(intMap);
+      }
+
+      if (postsData.success && postsData.data) {
+        setPosts(postsData.data);
       }
     } catch (error) {
-      console.error('Error fetching calendar posts:', error);
+      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
@@ -56,6 +69,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
   const monthName = currentDate.toLocaleString('default', { month: 'long' });
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
+
+  const getPlatformNames = (platformIds: string[]) => {
+    if (!platformIds || platformIds.length === 0) return 'No platforms';
+    return platformIds.map(id => integrations[id]?.name || 'Unknown').join(', ');
+  };
 
   const renderDays = () => {
     const totalDays = daysInMonth(year, month);
@@ -88,8 +106,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
                 className={`post-pill status-${post.status}`}
                 onClick={() => setSelectedPost(post)}
               >
-                <Facebook size={10} className="mr-1" />
-                <span className="truncate text-[10px]">{post.integration_name}</span>
+                <Share2 size={10} className="mr-1" />
+                <span className="truncate text-[10px]">
+                  {post.platforms?.length > 1 
+                    ? `${post.platforms.length} Platforms` 
+                    : (integrations[post.platforms?.[0]]?.name || 'Post')}
+                </span>
               </div>
             ))}
           </div>
@@ -148,7 +170,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
           <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-scale-up">
             <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
               <h5 className="font-bold flex items-center">
-                <Facebook className="text-blue-600 mr-2" size={18} />
+                <Share2 className="text-blue-600 mr-2" size={18} />
                 Post Details
               </h5>
               <button onClick={() => setSelectedPost(null)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors">
@@ -157,22 +179,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
             </div>
             
             <div className="p-6">
-              <div className="flex items-center gap-3 mb-6">
-                {selectedPost.integration_picture ? (
-                  <img src={selectedPost.integration_picture} className="w-12 h-12 rounded-full border-2 border-blue-50" />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
-                    {selectedPost.integration_name[0]}
-                  </div>
-                )}
-                <div>
-                  <h6 className="font-bold text-lg mb-0">{selectedPost.integration_name}</h6>
-                  <p className="text-xs text-gray-500 flex items-center">
-                    <Clock size={12} className="mr-1" /> 
-                    {new Date(selectedPost.schedule_time).toLocaleString()}
-                  </p>
-                </div>
-                <div className={`ml-auto px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider status-badge-${selectedPost.status}`}>
+              <div className="flex flex-col gap-1 mb-6">
+                <h6 className="font-bold text-lg mb-0">Scheduled for {getPlatformNames(selectedPost.platforms)}</h6>
+                <p className="text-xs text-gray-500 flex items-center">
+                  <Clock size={12} className="mr-1" /> 
+                  {new Date(selectedPost.schedule_time).toLocaleString()}
+                </p>
+                <div className={`mt-2 w-fit px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider status-badge-${selectedPost.status}`}>
                   {selectedPost.status}
                 </div>
               </div>
@@ -200,7 +213,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
                   className="w-full flex items-center justify-center gap-2 p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold transition-all mb-4"
                 >
                   <ExternalLink size={18} />
-                  View on Facebook
+                  View Post
                 </a>
               )}
 
@@ -216,11 +229,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
       )}
 
       {/* Styles */}
-      {/* Note: In React TSX with strict mode, we typically move generic styles to CSS files or stick to Tailwind. 
-          The previous version had a <style jsx> block. I will preserve it but it might need 'styled-jsx' types or be moved to index.css.
-          For this migration, I'll convert it to a standard style tag or move logic if needed. 
-          Given this is likely Vite + Tailwind, raw style tags in render work but are not ideal. 
-          I will keep it for parity but ideally should refactor later. */}
       <style>{`
         .calendar-grid {
           display: grid;

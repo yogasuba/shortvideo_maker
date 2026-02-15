@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Loader2, CheckCircle, Download, PlusCircle } from 'lucide-react';
+import { Loader2, CheckCircle, Download, PlusCircle, Send } from 'lucide-react';
 import FacebookShare from './FacebookShare';
+import ScheduleModal from './ScheduleModal';
 import { OrientationType, AlertType } from '../types';
 
 interface GenerationProgressStepProps {
@@ -31,6 +32,7 @@ const GenerationProgressStep: React.FC<GenerationProgressStepProps> = ({
   addAlert
 }) => {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [showScheduleModal, setShowScheduleModal] = useState<boolean>(false);
 
   const downloadVideo = async () => {
     if (!videoUrl) return;
@@ -109,6 +111,14 @@ const GenerationProgressStep: React.FC<GenerationProgressStepProps> = ({
                 )}
                 Download Video
               </button>
+              
+              <button 
+                className="btn-primary-custom flex items-center justify-center w-full sm:w-auto bg-pink-600 hover:bg-pink-700"
+                onClick={() => setShowScheduleModal(true)}
+              >
+                <Send className="mr-2 w-5 h-5" /> Schedule to Socials
+              </button>
+
               <button 
                 className="px-6 py-3 border-2 border-primary text-primary rounded-lg font-semibold flex items-center justify-center hover:bg-primary hover:text-white transition-all w-full sm:w-auto"
                 onClick={resetForm}
@@ -124,6 +134,15 @@ const GenerationProgressStep: React.FC<GenerationProgressStepProps> = ({
               API_BASE={API_BASE}
               addAlert={addAlert}
             />
+            
+            {showScheduleModal && (
+              <ScheduleModal 
+                videoId={projectId}
+                onClose={() => setShowScheduleModal(false)}
+                onSuccess={() => addAlert('Post scheduled successfully!', 'success')}
+                API_BASE={API_BASE}
+              />
+            )}
           </div>
         )}
       </div>

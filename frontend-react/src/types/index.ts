@@ -38,22 +38,35 @@ export interface ScenesPreview {
   scenes: SceneData[];
 }
 
-export interface Integration {
+export interface Interaction {
   id: string;
   name: string;
   picture?: string;
 }
 
+export interface PostizIntegration {
+  id: string;
+  name: string;
+  platform: string;
+  enabled: boolean;
+  picture?: string;
+  identifier?: string;
+  disabled?: boolean;
+}
+
 export interface ScheduledPost {
   id: string;
-  integration_id: string;
-  integration_name: string;
-  integration_picture?: string;
-  schedule_time: string;
+  video_id: string;
   caption: string;
-  status: 'scheduled' | 'posted' | 'failed';
-  fb_permalink?: string;
+  platforms: string[];
+  schedule_time: string;
+  status: 'pending' | 'scheduled' | 'posted' | 'failed' | 'retrying';
+  postiz_post_id?: string;
   error_message?: string;
+  // Legacy fields (optional)
+  integration_id?: string;
+  integration_name?: string;
+  fb_permalink?: string;
 }
 
 // Component Prop Types
@@ -65,7 +78,7 @@ export interface Alert {
   type: AlertType;
 }
 
-export type ViewType = 'creator' | 'calendar';
+export type ViewType = 'creator' | 'calendar' | 'integrations';
 export type OrientationType = 'portrait' | 'landscape';
 export type SubtitleStyleType = 'static' | 'scroll_up';
 export type ToneType = 'neutral' | 'professional' | 'casual' | 'humorous' | 'educational' | 'motivational';

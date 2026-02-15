@@ -1,4 +1,5 @@
 import datetime
+from datetime import timezone
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Boolean, JSON, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -20,10 +21,19 @@ class Integration(Base):
     picture = Column(String, nullable=True)
     access_token = Column(String)
     refresh_token = Column(String, nullable=True)
-    token_expires_at = Column(DateTime, nullable=True)
+    token_expires_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc), onupdate=lambda: datetime.datetime.now(timezone.utc))
+
+class PostizIntegration(Base):
+    __tablename__ = "postiz_integrations"
+    
+    id = Column(String, primary_key=True)  # From Postiz
+    name = Column(String, nullable=False)
+    platform = Column(String, nullable=False)  # facebook, instagram, etc.
+    enabled = Column(Boolean, default=True)
+    last_synced = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
 
 class ScheduledPost(Base):
     __tablename__ = "scheduled_posts"
@@ -33,12 +43,19 @@ class ScheduledPost(Base):
     integration_id = Column(String, ForeignKey("integrations.id"))
     video_path = Column(String)
     caption = Column(String)
-    schedule_time = Column(DateTime, index=True)
+    schedule_time = Column(DateTime(timezone=True), index=True)
     status = Column(String, default="scheduled") # scheduled, posted, failed
     error_message = Column(String, nullable=True)
     fb_post_id = Column(String, nullable=True)
     fb_permalink = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # Postiz integration fields
+    postiz_post_id = Column(String, nullable=True, index=True)
+    postiz_media_id = Column(String, nullable=True)
+    platforms = Column(String, nullable=True)  # Comma-separated platform IDs
+    retry_count = Column(Integer, default=0)
+    
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
     
     integration = relationship("Integration")
 

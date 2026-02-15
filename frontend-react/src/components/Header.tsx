@@ -1,5 +1,5 @@
 import React from 'react';
-import { Film, RotateCcw, Moon, Sun, Calendar } from 'lucide-react';
+import { Film, RotateCcw, Moon, Sun, Calendar, Share2 } from 'lucide-react';
 import { ViewType } from '../types';
 
 interface HeaderProps {
@@ -8,9 +8,10 @@ interface HeaderProps {
   isDarkTheme: boolean;
   setView: (view: ViewType) => void;
   isCalendarView: boolean;
+  isIntegrationsView: boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView }) => {
+const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView, isIntegrationsView }) => {
   return (
     <div className="header">
       <div className="container-custom">
@@ -34,6 +35,12 @@ const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, se
               onClick={() => setView('calendar')}
             >
               <Calendar className="w-4 h-4 mr-1" /> Calendar
+            </button>
+            <button 
+              className={`btn ${isIntegrationsView ? 'btn-primary-custom' : 'btn-outline-primary'} flex items-center ml-2`} 
+              onClick={() => setView('integrations')}
+            >
+              <Share2 className="w-4 h-4 mr-1" /> Integrations
             </button>
             <button className="btn-primary-custom inline-flex items-center justify-center min-w-[45px] ml-2" onClick={toggleTheme}>
               {isDarkTheme ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}

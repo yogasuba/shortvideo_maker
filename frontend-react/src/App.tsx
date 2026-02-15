@@ -9,6 +9,9 @@ import ChooseVoiceStep from './components/ChooseVoiceStep';
 import GenerationProgressStep from './components/GenerationProgressStep';
 import ScenePreviewModal from './components/ScenePreviewModal';
 import CalendarView from './components/CalendarView';
+import IntegrationsView from './components/IntegrationsView';
+import Toast from './components/Toast';
+import PostizCallback from './components/PostizCallback';
 import type { 
   ApiResponse, 
   ConfigData, 
@@ -85,6 +88,9 @@ function App(): React.JSX.Element {
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
   const [view, setView] = useState<ViewType>('creator'); // 'creator' or 'calendar'
 
+  // Toast State
+  const [toast, setToast] = useState<{message: string, type: 'success' | 'error' | 'info' | 'warning'} | null>(null);
+
   // Load configuration
   useEffect(() => {
     const loadConfiguration = async (): Promise<void> => {
@@ -102,11 +108,7 @@ function App(): React.JSX.Element {
   }, []);
 
   const addAlert = (message: string, type: AlertType = 'info'): void => {
-    const id = Date.now();
-    setAlerts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      removeAlert(id);
-    }, 5000);
+    setToast({ message, type });
   };
 
   const removeAlert = (id: number): void => {
@@ -277,33 +279,19 @@ function App(): React.JSX.Element {
     document.body.classList.toggle('dark-theme');
   };
 
-  // Handle Facebook OAuth callback
+
+  // Handle routing for OAuth callbacks (Headless Postiz)
+  const [isCallback, setIsCallback] = useState(false);
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    if (code) {
-      const handleFBAuth = async (): Promise<void> => {
-        try {
-          const response = await fetch(`${API_BASE}/api/facebook/callback?code=${code}`);
-          const data: ApiResponse<unknown> = await response.json();
-          if (data.success) {
-            addAlert('Facebook Page connected successfully!', 'success');
-          } else if (response.status === 500) {
-             // Silently ignore already used codes if we have logic to fetch integrations anyway
-             console.log("Code likely already used, checking integrations...");
-          } else {
-            throw new Error(data.detail || 'Authentication failed');
-          }
-        } catch (error) {
-          console.error('Facebook connection error:', error);
-        } finally {
-          // Clean up URL regardless
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-      };
-      handleFBAuth();
+    if (urlParams.get('postiz_callback') === 'true' || window.location.pathname.startsWith('/integrations/social/')) {
+      setIsCallback(true);
     }
   }, []);
+
+  if (isCallback) {
+    return <PostizCallback />;
+  }
 
   return (
     <div className={isDarkTheme ? 'dark-theme' : ''}>
@@ -313,15 +301,26 @@ function App(): React.JSX.Element {
         isDarkTheme={isDarkTheme} 
         setView={setView}
         isCalendarView={view === 'calendar'}
+        isIntegrationsView={view === 'integrations'}
       />
       
       <div className="container-custom">
         {view === 'calendar' ? (
           <CalendarView API_BASE={API_BASE} setView={setView} />
+        ) : view === 'integrations' ? (
+          <IntegrationsView API_BASE={API_BASE} addAlert={addAlert} />
         ) : (
           <>
             <StepIndicator currentStep={currentStep} />
-            <AlertContainer alerts={alerts} removeAlert={removeAlert} />
+            
+            {/* Replaced AlertContainer with Toast */}
+            {toast && (
+              <Toast 
+                message={toast.message}
+                type={toast.type}
+                onClose={() => setToast(null)}
+              />
+            )}
             
             {currentStep === 1 && (
           <VideoDetailsStep 

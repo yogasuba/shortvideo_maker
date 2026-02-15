@@ -74,6 +74,24 @@ class FacebookManager:
         response.raise_for_status()
         return response.json().get("data", [])
 
+    def get_video_status(self, video_id: str, access_token: str) -> Dict:
+        """
+        Check the status of a video on Facebook.
+        Ref: https://developers.facebook.com/docs/video-api/guides/publishing#check-upload-status
+        """
+        url = f"{self.base_url}/{video_id}"
+        params = {
+            "fields": "status,permalink_url",
+            "access_token": access_token
+        }
+        
+        response = requests.get(url, params=params)
+        if response.status_code != 200:
+            logging.error(f"Failed to get video status: {response.text}")
+            response.raise_for_status()
+            
+        return response.json()
+
     def post_video(self, page_id: str, page_access_token: str, video_path: str, title: str, description: str) -> Dict:
         """
         Post video using multipart/form-data as requested.

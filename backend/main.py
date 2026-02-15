@@ -54,6 +54,9 @@ from exceptions import (
 from database import init_db, get_db, Integration, ScheduledPost
 from facebook_manager import facebook_manager
 from scheduler import start_scheduler
+from postiz_client import PostizClient
+from database import init_db, get_db, Integration, ScheduledPost, PostizIntegration
+from postiz_auth import PostizAuthService
 
 # Load environment variables (Moved to top)
 
@@ -74,6 +77,12 @@ class Config:
     # FFmpeg paths
     FFMPEG_PATH = os.path.normpath("C:/ffmpeg/bin/ffmpeg.exe")
     FFPROBE_PATH = os.path.normpath("C:/ffmpeg/bin/ffprobe.exe")
+    
+    # Postiz Configuration
+    POSTIZ_ENABLED = os.getenv("POSTIZ_ENABLED", "true").lower() == "true"
+    POSTIZ_API_KEY = os.getenv("POSTIZ_API_KEY")
+    POSTIZ_BASE_URL = os.getenv("POSTIZ_BASE_URL", "http://localhost:4007")
+    POSTIZ_JWT_SECRET = os.getenv("JWT_SECRET") # User must set this
     
     @classmethod
     def validate_ffmpeg_harfbuzz(cls):
@@ -431,9 +440,6 @@ class VideoGenerator:
         self.replicate_token = os.getenv("REPLICATE_API_TOKEN")
         self.stability_key = os.getenv("STABILITY_API_KEY")
         
-        print(f"DEBUG: Replicate Token: {'***' + self.replicate_token[-4:] if self.replicate_token else 'NOT FOUND'}")
-        print(f"DEBUG: Stability Key: {'***' + self.stability_key[-4:] if self.stability_key else 'NOT FOUND'}")
-        
         if self.replicate_token:
             # os.environ["REPLICATE_API_TOKEN"] = self.replicate_token
             self.replicate_client = replicate.Client(api_token=self.replicate_token)
@@ -444,16 +450,35 @@ class VideoGenerator:
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
         self.pexels_key = os.getenv("PEXELS_API_KEY")
         self.elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
-        
-        print(f"DEBUG: HuggingFace Token: {'***' + self.hf_token[-4:] if self.hf_token else 'NOT FOUND'}")
-        print(f"DEBUG: OpenRouter Key: {'***' + self.openrouter_key[-4:] if self.openrouter_key else 'NOT FOUND'}")
-        print(f"DEBUG: Pexels API Key: {'***' + self.pexels_key[-4:] if self.pexels_key else 'NOT FOUND'}")
-        print(f"DEBUG: ElevenLabs API Key: {'***' + self.elevenlabs_key[-4:] if self.elevenlabs_key else 'NOT FOUND'}")
-        
         if self.elevenlabs_key:
             self.elevenlabs_client = ElevenLabs(api_key=self.elevenlabs_key)
         else:
             self.elevenlabs_client = None
+
+        # Load projects from disk
+        self.load_projects()
+
+    def load_projects(self):
+        """Load projects from JSON file"""
+        self.projects_file = Config.STORAGE_DIR / "projects.json"
+        try:
+            if self.projects_file.exists():
+                with open(self.projects_file, 'r') as f:
+                    self.projects = json.load(f)
+                logging.info(f"Loaded {len(self.projects)} projects from disk")
+            else:
+                self.projects = {}
+        except Exception as e:
+            logging.error(f"Failed to load projects: {e}")
+            self.projects = {}
+
+    def save_projects(self):
+        """Save projects to JSON file"""
+        try:
+            with open(self.projects_file, 'w') as f:
+                json.dump(self.projects, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save projects: {e}")
     
     def _initialize_voices(self):
         # Using popular FREE/Premade ElevenLabs voices
@@ -1569,6 +1594,7 @@ class VideoGenerator:
         
         project["progress"] = 5
         project["status_message"] = "Starting video creation..."
+        self.save_projects()
         
         try:
             # Use provided scenes if available, otherwise split script
@@ -1656,6 +1682,8 @@ class VideoGenerator:
                 project["status_message"] = "Failed to create video"
                 project["status"] = "failed"
             
+            self.save_projects()
+            
         except Exception as e:
             logging.error(f"Video creation failed: {e}", exc_info=True)
             project["status"] = "failed"
@@ -1672,6 +1700,7 @@ class VideoGenerator:
                     "action": "RETRY"
                 }
                 project["status_message"] = f"Error: {str(e)}"
+            self.save_projects()
     
     async def _concatenate_videos(self, video_files: List[str], resolution: str, use_demuxer: bool = False) -> str:
         """Concatenate multiple videos into one"""
@@ -1904,11 +1933,7 @@ async def get_config():
     }
 
 # Lifecycle events
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    start_scheduler()
-    logging.info("Backend services (DB & Scheduler) initialized.")
+# Original startup_event removed in favor of combined_startup_event at bottom of file
 
 @app.post("/api/videos/create")
 async def create_video(request: VideoCreateRequest, background_tasks: BackgroundTasks):
@@ -1940,6 +1965,7 @@ async def create_video(request: VideoCreateRequest, background_tasks: Background
             "voice": request.voice,
             "image_style": request.image_style
         }
+        video_gen.save_projects()
         
         # Start processing in background
         background_tasks.add_task(video_gen.create_video, project_id, request)
@@ -2124,43 +2150,6 @@ async def get_fb_auth_url():
     url = facebook_manager.get_auth_url(redirect_uri, state)
     return {"success": True, "url": url}
 
-@app.get("/api/facebook/callback")
-async def fb_callback(code: str, db: Session = Depends(get_db)):
-    """Handle Facebook OAuth callback"""
-    try:
-        redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/facebook-callback"
-        token_data = facebook_manager.exchange_code_for_token(code, redirect_uri)
-        user_token = token_data.get("access_token")
-        
-        # Fetch pages the user can manage
-        pages = facebook_manager.get_pages(user_token)
-        
-        # We store them in the DB.
-        stored_pages = []
-        for page in pages:
-            integration = db.query(Integration).filter(Integration.internal_id == page["id"]).first()
-            if not integration:
-                integration = Integration(
-                    id=f"integration_{uuid.uuid4().hex[:8]}",
-                    internal_id=page["id"],
-                    name=page["name"],
-                    picture=page.get("picture", {}).get("data", {}).get("url"),
-                    access_token=page["access_token"],
-                    provider="facebook"
-                )
-                db.add(integration)
-            else:
-                integration.access_token = page["access_token"]
-                integration.name = page["name"]
-                integration.picture = page.get("picture", {}).get("data", {}).get("url")
-            stored_pages.append(integration)
-        
-        db.commit()
-        return {"success": True, "pages": pages}
-    except Exception as e:
-        logging.error(f"FB Callback Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/api/facebook/integrations")
 async def get_fb_integrations(db: Session = Depends(get_db)):
     """List connected Facebook pages"""
@@ -2278,21 +2267,359 @@ async def get_scheduled_posts(db: Session = Depends(get_db)):
 
 # ========== RUN SERVER ==========
 
+import asyncio
+import uuid
+import logging
+from typing import List, Optional
+from pydantic import BaseModel
+from datetime import datetime
+
+# ==============================================================================
+# POSTIZ INTEGRATION ENDPOINTS
+# ==============================================================================
+
+try:
+    from postiz_client import PostizClient
+except ImportError:
+    logging.warning("Could not import PostizClient. Integration will be disabled.")
+    PostizClient = None
+
+postiz_client = None
+postiz_auth_service = PostizAuthService(
+    base_url=Config.POSTIZ_BASE_URL,
+    jwt_secret=Config.POSTIZ_JWT_SECRET
+)
+
+@app.on_event("startup")
+async def combined_startup_event():
+    import sys
+    print("COMBINED STARTUP: Initializing...", flush=True, file=sys.stderr)
+    try:
+        init_db()
+        print("COMBINED STARTUP: DB Initialized.", flush=True, file=sys.stderr)
+        start_scheduler()
+        print("COMBINED STARTUP: Scheduler Started.", flush=True, file=sys.stderr)
+    except Exception as e:
+        print(f"STARTUP ERROR: {e}", flush=True, file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+
+    global postiz_client
+    if Config.POSTIZ_ENABLED and Config.POSTIZ_API_KEY and PostizClient:
+        try:
+            postiz_client = PostizClient(
+                api_key=Config.POSTIZ_API_KEY,
+                base_url=Config.POSTIZ_BASE_URL
+            )
+            # Initialize session
+            await postiz_client.__aenter__() 
+            logging.info(f"Postiz Client initialized at {Config.POSTIZ_BASE_URL}")
+            
+            # Pre-fetch user ID for headless auth
+            if Config.POSTIZ_JWT_SECRET:
+                # Run in background to not block startup
+                asyncio.create_task(asyncio.to_thread(postiz_auth_service.get_user_id))
+        except Exception as e:
+            logging.error(f"Failed to initialize Postiz client: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if postiz_client:
+        await postiz_client.close()
+
+@app.get("/api/postiz/integrations")
+async def get_postiz_integrations(
+    force_refresh: bool = False,
+    db: Session = Depends(get_db)
+):
+    if not postiz_client:
+         raise HTTPException(status_code=400, detail="Postiz integration disabled")
+    
+    if not force_refresh:
+        cached = db.query(PostizIntegration).filter(PostizIntegration.enabled == True).all()
+        if cached:
+            return {"success": True, "data": [{"id": i.id, "name": i.name, "platform": i.platform, "enabled": i.enabled} for i in cached]}
+
+    try:
+        integrations = await postiz_client.get_integrations()
+        
+        # Get current API IDs
+        api_ids = [i.get('id') for i in integrations]
+        
+        # Sync to DB
+        for integration in integrations:
+             # Postiz 1.0/2.0 compat
+             pid = integration.get('platform') or integration.get('identifier') or integration.get('type') or integration.get('providerIdentifier') or integration.get('provider') or 'unknown'
+             iid = integration.get('id')
+             name = integration.get('name', 'Unknown')
+             disabled = integration.get('disabled', False)
+             
+             db_int = db.query(PostizIntegration).filter(PostizIntegration.id == iid).first()
+             
+             # Skip unknown platforms
+             if pid == 'unknown':
+                 logging.warning(f"Skipping integration {name} ({iid}) with unknown platform")
+                 continue
+                 
+             if not db_int:
+                 db_int = PostizIntegration(id=iid, name=name, platform=pid, enabled=not disabled)
+                 db.add(db_int)
+             else:
+                 db_int.name = name
+                 db_int.platform = pid
+                 db_int.enabled = not disabled
+                 db_int.last_synced = datetime.utcnow()
+        
+        # Remove deleted integrations
+        if api_ids:
+            db.query(PostizIntegration).filter(PostizIntegration.id.notin_(api_ids)).delete(synchronize_session=False)
+        elif integrations == []: # If API returns empty list, clear all
+            db.query(PostizIntegration).delete()
+            
+        db.commit()
+        return {"success": True, "data": integrations}
+    except Exception as e:
+        logging.error(f"Postiz Sync Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/postiz/auth-url/{provider}")
+async def get_postiz_auth_url(provider: str, callback_url: str):
+    """Get the OAuth URL for a provider from Postiz (Headless)"""
+    if not Config.POSTIZ_ENABLED:
+        raise HTTPException(status_code=400, detail="Postiz integration disabled")
+    if not Config.POSTIZ_JWT_SECRET:
+         raise HTTPException(status_code=500, detail="JWT_SECRET not configured for Postiz Auth")
+
+    result = await postiz_auth_service.get_auth_url(provider, callback_url)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+@app.post("/api/postiz/connect/{provider}")
+async def connect_postiz_account(provider: str, payload: Dict[str, str]):
+    """Complete the connection flow after OAuth callback"""
+    code = payload.get("code")
+    state = payload.get("state")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+        
+    result = await postiz_auth_service.complete_connection(provider, code, state)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result.get("details", result["error"]))
+    return {"success": True, "data": result}
+
+@app.post("/api/postiz/connect/{integration_id}/page")
+async def connect_postiz_page(integration_id: str, payload: Dict[str, str]):
+    """Complete the connection for a two-step provider (like Facebook) by selecting a page"""
+    state = payload.get("state")
+    page_id = payload.get("page")
+    if not state or not page_id:
+        raise HTTPException(status_code=400, detail="Missing state or page_id")
+        
+    result = await postiz_auth_service.complete_page_connection(integration_id, state, page_id)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result.get("details", result["error"]))
+    return {"success": True, "data": result}
+    """
+    Initiate OAuth flow for social media platform via Postiz
+    Returns the OAuth URL to redirect user to
+    """
+    if not Config.POSTIZ_ENABLED or not Config.POSTIZ_API_KEY:
+        raise HTTPException(status_code=400, detail="Postiz integration disabled")
+
+    try:
+        # Get OAuth URL from Postiz
+        # Note: Postiz API might need different handling based on version
+        # For now assuming standard Postiz structure
+        url = f"{Config.POSTIZ_BASE_URL}/api/v1/integrations/social/{provider}/auth"
+        
+        # We need to use internal Postiz logic or API if available
+        # Actually, Postiz usually handles auth via frontend > backend redirection
+        # But if we want to bypass Postiz frontend, we need to hit the backend directly
+        # and get the redirection URL
+        
+        headers = {"Authorization": f"Bearer {Config.POSTIZ_API_KEY}"}
+        
+        # This endpoint might vary based on Postiz version. 
+        # Checking common pattern: GET /integrations/connect/{provider} 
+        # or we might need to construct the URL manually if Postiz frontend does it.
+        
+        # Let's try to fetch from Postiz backend (assuming it exposes an auth endpoint)
+        # If not, we might need to redirect user to Postiz frontend specific page.
+        # But user wants to avoid login.
+        
+        # Alternative: Use the 'connect' endpoint if it returns a URL
+        # Trying a likely endpoint for obtaining auth URL
+        response = requests.get(
+            f"{Config.POSTIZ_BASE_URL}/api/v1/integrations/{provider}/auth-url", 
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {"success": True, "oauth_url": data.get("url"), "provider": provider}
+            
+        # Fallback: Construct URL if we know the pattern
+        # This is risky without knowing exact Postiz API
+        
+        # Try another endpoint pattern often used in Postiz forks
+        response = requests.get(
+            f"{Config.POSTIZ_BASE_URL}/api/v1/integrations/social/{provider}", 
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+             # Maybe it returns auth url?
+             pass
+        
+        # If all else fails, returning a specific error that frontend can capture
+        # and maybe direct user to backup plan (Postiz UI)
+        return {"success": False, "error": "Could not retrieve connection URL from Postiz API. Please use Postiz Dashboard."}
+
+    except Exception as e:
+        logging.error(f"Failed to initiate connection: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/postiz/callback-handle")
+async def postiz_callback_handle():
+    """Placeholder for potential server-side redirect handling if needed"""
+    return {"success": True, "message": "Callback received"}
+
+class ScheduleRequest(BaseModel):
+    video_id: str
+    caption: str
+    platform_ids: List[str]
+    schedule_time: Optional[datetime] = None
+
+@app.post("/api/postiz/upload-and-schedule")
+async def upload_and_schedule(
+    req: ScheduleRequest,
+    db: Session = Depends(get_db)
+):
+    if not postiz_client:
+        raise HTTPException(status_code=400, detail="Postiz integration disabled")
+        
+    # Locate Video
+    video_path = None
+    # Check absolute path in storage
+    possible_path = Config.STORAGE_DIR / "videos" / f"{req.video_id}.mp4"
+    if possible_path.exists():
+        video_path = possible_path
+    elif (Config.STORAGE_DIR / "videos" / req.video_id).exists():
+        video_path = Config.STORAGE_DIR / "videos" / req.video_id
+    elif (Config.STORAGE_DIR / req.video_id).exists():
+         video_path = Config.STORAGE_DIR / req.video_id  
+    
+    if not video_path:
+        # Try finding by project ID
+        project = video_gen.projects.get(req.video_id)
+        if project and project.get("video_url"):
+            # video_url is like /storage/videos/video_xxx.mp4
+            # We need absolute path
+            relative_path = project["video_url"].lstrip("/")
+            if relative_path.startswith("storage/"):
+                 possible_path = Config.STORAGE_DIR / relative_path.replace("storage/", "")
+            else:
+                 possible_path = Config.STORAGE_DIR / relative_path
+            
+            if possible_path.exists():
+                video_path = possible_path
+
+    if not video_path:
+        raise HTTPException(status_code=404, detail=f"Video file not found for ID: {req.video_id}")
+
+    try:
+        # 1. Upload
+        logging.info(f"Uploading {video_path}...")
+        media = await postiz_client.upload_video(str(video_path))
+        
+        # 2. Schedule
+        logging.info("Scheduling post...")
+        post = await postiz_client.create_post(
+            media_items=[media],
+            content=req.caption,
+            integration_ids=req.platform_ids,
+            publish_date=req.schedule_time
+        )
+        logging.info(f"Postiz create_post response: {post}")
+        
+        # Postiz 2.0 returns a list of results, one per integration
+        postiz_id = post[0].get('postId') if isinstance(post, list) and len(post) > 0 else post.get('id')
+        
+        # Normalize schedule_time to UTC Naive for storage consistency
+        if req.schedule_time:
+            # Ensure it is UTC
+            utc_dt = req.schedule_time
+            if utc_dt.tzinfo is None:
+                 utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+            else:
+                 utc_dt = utc_dt.astimezone(timezone.utc)
+            
+            # Store as naive UTC
+            storage_dt = utc_dt.replace(tzinfo=None)
+        else:
+            storage_dt = datetime.utcnow()
+
+        # 3. Save Record
+        rec = ScheduledPost(
+            id=f"post_{uuid.uuid4().hex[:8]}",
+            project_id=req.video_id,
+            postiz_post_id=postiz_id,
+            postiz_media_id=media.get('id'),
+            caption=req.caption,
+            platforms=",".join(req.platform_ids),
+            schedule_time=storage_dt,
+            status='scheduled' if req.schedule_time else 'posted'
+        )
+        db.add(rec)
+        db.commit()
+        
+        return {"success": True, "data": {"post_id": rec.id}}
+    except Exception as e:
+        logging.error(f"Scheduling failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scheduler/trigger")
+async def trigger_scheduler_manual():
+    """Manually trigger the scheduler check"""
+    from scheduler import process_scheduled_posts
+    logging.error("MANUAL SCHEDULER TRIGGER RECEIVED")
+    try:
+        await process_scheduled_posts()
+        return {"success": True, "message": "Scheduler triggered"}
+    except Exception as e:
+         logging.error(f"Manual trigger failed: {e}")
+         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scheduled-posts")
+async def get_scheduled_posts_endpoint(db: Session = Depends(get_db)):
+    posts = db.query(ScheduledPost).order_by(ScheduledPost.created_at.desc()).all()
+    data = []
+    for p in posts:
+        if p.schedule_time:
+            # Force UTC if naive, otherwise convert to UTC string with Z
+            dt = p.schedule_time
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            schedule_time_str = dt.isoformat().replace("+00:00", "Z")
+        else:
+            schedule_time_str = None
+            
+        data.append({
+            "id": p.id,
+            "caption": p.caption,
+            "schedule_time": schedule_time_str,
+            "status": p.status,
+            "platforms": p.platforms.split(',') if p.platforms else [],
+            "video_id": p.project_id
+        })
+    return {"success": True, "data": data}
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8001))
-    
     print("=" * 50)
-    print("🎬 FACELESS VIDEOS CREATOR v2 - WITH AUDIO & STYLES")
+    print(f"🎬 FACELESS VIDEOS BACKEND running on port {port}")
     print("=" * 50)
-    print(f"Server starting on: http://localhost:{port}")
-    print(f"API Documentation: http://localhost:{port}/docs")
-    print(f"Storage directory: {Config.STORAGE_DIR}")
-    print("\nFeatures:")
-    print("• Single script input - auto-split into scenes")
-    print("• 10 Different Voices with audio generation")
-    print("• Pexels realistic image style")
-    print("• Video with audio, images, and text overlay")
-    print("• Multiple languages support")
-    print("=" * 50)
-    
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
