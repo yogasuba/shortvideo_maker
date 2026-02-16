@@ -54,6 +54,9 @@ class ScheduledPost(Base):
     postiz_media_id = Column(String, nullable=True)
     platforms = Column(String, nullable=True)  # Comma-separated platform IDs
     retry_count = Column(Integer, default=0)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    processing_started_at = Column(DateTime(timezone=True), nullable=True)
+    media_url = Column(String, nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
     

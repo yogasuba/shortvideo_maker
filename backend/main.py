@@ -3,7 +3,7 @@ import json
 import uuid
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import logging
@@ -2231,6 +2231,7 @@ async def fb_schedule(
             project_id=project_id,
             integration_id=integration_id,
             video_path=video_path,
+            media_url=video_path,
             caption=caption or project.get("title", ""),
             schedule_time=utc_dt,
             status="scheduled"
@@ -2265,6 +2266,45 @@ async def get_scheduled_posts(db: Session = Depends(get_db)):
         logging.error(f"Error fetching scheduled posts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/scheduler/status")
+async def get_scheduler_status(db: Session = Depends(get_db)):
+    """Health check for the scheduling system"""
+    from sqlalchemy import func
+    try:
+        stats = db.query(
+            ScheduledPost.status, 
+            func.count(ScheduledPost.id)
+        ).group_by(ScheduledPost.status).all()
+        
+        status_map = {s: count for s, count in stats}
+        
+        next_job = db.query(ScheduledPost).filter(
+            ScheduledPost.status.in_(["scheduled", "failed_retry"])
+        ).order_by(ScheduledPost.schedule_time.asc()).first()
+        
+        # Check worker heartbeat (simple check: if any job was started in last 5 mins)
+        five_mins_ago = datetime.now(timezone.utc) - timedelta(minutes=5)
+        recent_activity = db.query(ScheduledPost).filter(
+            ScheduledPost.processing_started_at.isnot(None),
+            ScheduledPost.processing_started_at > five_mins_ago
+        ).first()
+
+        now_utc = datetime.now(timezone.utc)
+        print("MARKER: HEALTH CHECK HIT")
+        return {
+            "success": True,
+            "data": {
+                "stats": status_map,
+                "next_job_at": next_job.schedule_time.isoformat() if next_job and next_job.schedule_time else None,
+                "worker_status": "active" if recent_activity else "idle_or_down",
+                "server_time_utc": now_utc.isoformat()
+            }
+        }
+    except Exception as e:
+        import traceback
+        logging.error(f"Scheduler Status Error: {e}")
+        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+
 # ========== RUN SERVER ==========
 
 import asyncio
@@ -2297,8 +2337,8 @@ async def combined_startup_event():
     try:
         init_db()
         print("COMBINED STARTUP: DB Initialized.", flush=True, file=sys.stderr)
-        start_scheduler()
-        print("COMBINED STARTUP: Scheduler Started.", flush=True, file=sys.stderr)
+        # start_scheduler() # DEPRECATED: Using separate scheduler_worker.py via PM2
+        # print("COMBINED STARTUP: Scheduler Started.", flush=True, file=sys.stderr)
     except Exception as e:
         print(f"STARTUP ERROR: {e}", flush=True, file=sys.stderr)
         import traceback
@@ -2566,6 +2606,7 @@ async def upload_and_schedule(
         rec = ScheduledPost(
             id=f"post_{uuid.uuid4().hex[:8]}",
             project_id=req.video_id,
+            video_path=str(video_path),  # CRITICAL: Save the actual path
             postiz_post_id=postiz_id,
             postiz_media_id=media.get('id'),
             caption=req.caption,

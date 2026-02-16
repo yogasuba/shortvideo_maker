@@ -171,13 +171,13 @@ class PostizClient:
     async def get_post_status(self, post_id: str) -> Dict:
         """Get status of a scheduled post"""
         # Public API returns a list [ { ... } ]
-        res = await self._request('GET', f'/public/posts/{post_id}')
+        res = await self._request('GET', f'/public/v1/posts/{post_id}')
         return res[0] if isinstance(res, list) and len(res) > 0 else res
 
     async def get_post(self, post_id: str) -> Dict:
         """Get a single post by ID"""
         # Public API returns a list [ { ... } ]
-        res = await self._request('GET', f'/public/posts/{post_id}')
+        res = await self._request('GET', f'/public/v1/posts/{post_id}')
         return res[0] if isinstance(res, list) and len(res) > 0 else res
     
     async def get_all_posts(self) -> List[Dict]:

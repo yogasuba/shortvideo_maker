@@ -92,6 +92,24 @@ class FacebookManager:
             
         return response.json()
 
+    def validate_token(self, access_token: str) -> bool:
+        """
+        Validate if the token is still active and has necessary permissions.
+        """
+        try:
+            url = f"https://graph.facebook.com/debug_token"
+            params = {
+                "input_token": access_token,
+                "access_token": f"{self.app_id}|{self.app_secret}"
+            }
+            response = requests.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json().get("data", {})
+                return data.get("is_valid", False)
+            return False
+        except Exception:
+            return False
+
     def post_video(self, page_id: str, page_access_token: str, video_path: str, title: str, description: str) -> Dict:
         """
         Post video using multipart/form-data as requested.
@@ -99,6 +117,12 @@ class FacebookManager:
         """
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found at {video_path}")
+
+        # Check token validity before attempt
+        if not self.validate_token(page_access_token):
+             logging.error(f"Token for Page {page_id} is invalid or expired.")
+             # We throw a custom message that scheduler_worker can recognize as permanent or retryable
+             raise Exception("401: Facebook token is invalid or expired. Permissions may have been revoked.")
 
         url = f"{self.video_url}/{page_id}/videos"
         
@@ -119,7 +143,15 @@ class FacebookManager:
         files['source'][1].close()
         
         if response.status_code != 200:
-            logging.error(f"Facebook Video Upload Failed: {response.text}")
+            error_data = response.json().get("error", {})
+            error_msg = error_data.get("message", "Unknown error")
+            error_code = error_data.get("code")
+            logging.error(f"Facebook Video Upload Failed (Code {error_code}): {error_msg}")
+            
+            # Surface 401/403 errors as permanent
+            if response.status_code in [401, 403]:
+                 raise Exception(f"{response.status_code}: {error_msg}")
+            
             response.raise_for_status()
 
         return response.json()

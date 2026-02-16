@@ -63,3 +63,14 @@ yarn-error.log
 *.temp
 *.bak
 *.cache
+
+# Database
+*.db
+*.db-journal
+
+# Tools/Debug
+tools/
+today_posts_output.txt
+
+# Generated assets
+fonts/
