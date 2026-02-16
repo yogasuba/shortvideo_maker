@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, Plus, Loader2, RotateCw, Type, AlignCenter, Eye, EyeOff, Settings2 } from 'lucide-react';
+import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, Plus, Loader2, RotateCw, Type, AlignCenter, Eye, EyeOff, Settings2, Palette, Square, Bold, Mic } from 'lucide-react';
 
 const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BASE, addAlert }) => {
   const [editingIndex, setEditingIndex] = useState(null);
   const [editVisualText, setEditVisualText] = useState('');
   const [editVoiceText, setEditVoiceText] = useState('');
   const [uploadingIndex, setUploadingIndex] = useState(null);
+  const [uploadingAudioIndex, setUploadingAudioIndex] = useState(null);
+  const [activeLineIndices, setActiveLineIndices] = useState({});
 
   const startEdit = (index, scene) => {
     setEditingIndex(index);
@@ -13,15 +15,40 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
     setEditVoiceText(scene.voice_over || scene.text);
   };
 
+  const getCurrentVal = (index, field) => {
+    const activeLineIndex = activeLineIndices[index];
+    const scene = data.scenes[index];
+    if (activeLineIndex !== undefined && activeLineIndex !== null && scene.line_styles?.[activeLineIndex]) {
+      // For boolean fields like bg_visible, handle explicitly
+      if (scene.line_styles[activeLineIndex][field] !== undefined) {
+        return scene.line_styles[activeLineIndex][field];
+      }
+    }
+    return scene[field];
+  };
+
   const saveEdit = (index) => {
     if (!editVisualText.trim()) return;
     
     const newScenes = [...data.scenes];
+    const currentScene = newScenes[index];
+    
+    // Recalculate duration if it's currently on "auto"
+    let newDuration = currentScene.duration;
+    if (currentScene.duration_is_auto !== false) {
+      const textToAnalyze = editVoiceText || editVisualText;
+      const wordCount = textToAnalyze.trim().split(/\s+/).length;
+      // Use 2.5 wps (same as backend), clamp between 3 and 12 seconds
+      newDuration = Math.max(3, Math.min(Math.ceil(wordCount / 2.5), 12));
+    }
+
     newScenes[index] = {
-      ...newScenes[index],
+      ...currentScene,
       text: editVisualText,
       visual_prompt: editVisualText,
-      voice_over: editVoiceText
+      voice_over: editVoiceText,
+      duration: newDuration,
+      duration_is_auto: currentScene.duration_is_auto !== false
     };
     
     setScenesPreview({ ...data, scenes: newScenes });
@@ -77,6 +104,58 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
     }
   };
 
+  const uploadSceneAudio = async (index, file) => {
+    if (!file) return;
+    
+    setUploadingAudioIndex(index);
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/upload/scene-audio`, {
+        method: 'POST',
+        body: formData
+      });
+      const resData = await response.json();
+      
+      if (resData.success) {
+        const newScenes = [...data.scenes];
+        newScenes[index] = {
+          ...newScenes[index],
+          custom_audio_url: resData.data.url,
+          custom_audio_path: resData.data.path,
+          duration: resData.data.duration,
+          duration_is_auto: false
+        };
+        setScenesPreview({ ...data, scenes: newScenes });
+        addAlert(`Audio uploaded for scene ${index + 1}`, 'success');
+      } else {
+        throw new Error('Upload failed');
+      }
+    } catch (error) {
+      console.error('Audio upload error:', error);
+      addAlert('Failed to upload audio', 'error');
+    } finally {
+      setUploadingAudioIndex(null);
+    }
+  };
+
+  const removeSceneAudio = (index) => {
+    const newScenes = [...data.scenes];
+    const scene = { ...newScenes[index] };
+    delete scene.custom_audio_url;
+    delete scene.custom_audio_path;
+    
+    // Recalculate duration
+    const textToAnalyze = scene.voice_over || scene.text;
+    const wordCount = textToAnalyze.trim().split(/\s+/).length;
+    scene.duration = Math.max(3, Math.min(Math.ceil(wordCount / 2.5), 12));
+    scene.duration_is_auto = true;
+    
+    newScenes[index] = scene;
+    setScenesPreview({ ...data, scenes: newScenes });
+  };
+
   const removeSceneImage = (index) => {
     const newScenes = [...data.scenes];
     delete newScenes[index].custom_image_url;
@@ -86,7 +165,24 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
 
   const updateSceneConfig = (index, updates) => {
     const newScenes = [...data.scenes];
-    newScenes[index] = { ...newScenes[index], ...updates };
+    const activeLineIndex = activeLineIndices[index];
+
+    if (activeLineIndex !== undefined && activeLineIndex !== null) {
+      const scene = { ...newScenes[index] };
+      const lines = scene.text.split('\n');
+      const lineStyles = [...(scene.line_styles || [])];
+      
+      // Ensure the lineStyles array is the correct length
+      while (lineStyles.length < lines.length) {
+        lineStyles.push({});
+      }
+      
+      lineStyles[activeLineIndex] = { ...lineStyles[activeLineIndex], ...updates };
+      scene.line_styles = lineStyles;
+      newScenes[index] = scene;
+    } else {
+      newScenes[index] = { ...newScenes[index], ...updates };
+    }
     setScenesPreview({ ...data, scenes: newScenes });
   };
 
@@ -139,7 +235,37 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                           rows={3}
                         />
                       ) : (
-                        <div className="scene-text p-2 bg-gray-50 rounded">{scene.text}</div>
+                        <div className="flex flex-col gap-1">
+                          {(scene.text || '').split('\n').map((line, lIdx) => {
+                            const lineStyle = (scene.line_styles && scene.line_styles[lIdx]) || {};
+                            const isActive = activeLineIndices[index] === lIdx;
+                            return (
+                              <div 
+                                key={lIdx}
+                                className={`scene-text p-2 rounded cursor-pointer transition-all duration-200 ${isActive ? 'ring-2 ring-primary border-transparent' : 'bg-gray-50 border-transparent hover:bg-gray-100'}`}
+                                onClick={() => setActiveLineIndices(prev => ({ 
+                                  ...prev, 
+                                  [index]: isActive ? null : lIdx 
+                                }))}
+                                style={{ 
+                                  color: lineStyle.subtitle_color || scene.subtitle_color || 'inherit', 
+                                  fontWeight: (lineStyle.subtitle_bold !== undefined ? lineStyle.subtitle_bold : scene.subtitle_bold) ? 'bold' : 'normal',
+                                  borderLeft: (lineStyle.subtitle_bold !== undefined ? lineStyle.subtitle_bold : scene.subtitle_bold) ? `2px solid ${lineStyle.subtitle_color || scene.subtitle_color || '#ccc'}` : 'none'
+                                }}
+                              >
+                                {line || <span className="text-gray-300 italic">Empty line</span>}
+                              </div>
+                            );
+                          })}
+                          <button 
+                            className="text-[0.6rem] text-primary font-bold uppercase mt-1 self-start hover:underline px-1 py-0.5"
+                            onClick={() => setActiveLineIndices(prev => ({ ...prev, [index]: null }))}
+                          >
+                            {activeLineIndices[index] !== null && activeLineIndices[index] !== undefined ? (
+                               <span className="flex items-center gap-1"><X className="w-2.5 h-2.5" /> Back to All Lines</span>
+                            ) : null}
+                          </button>
+                        </div>
                       )}
                     </div>
                     
@@ -154,7 +280,7 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                           disabled={scene.show_image_only}
                         />
                       ) : (
-                        <div className="scene-text p-2 bg-blue-50/50 rounded border-l-3 border-blue-400 italic">
+                        <div className="scene-text p-2 bg-blue-50/50 rounded border-l-3 border-blue-400 italic whitespace-pre-wrap">
                           {scene.voice_over || scene.text}
                         </div>
                       )}
@@ -191,7 +317,7 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between">
+                           <div className="flex items-center justify-between">
                             <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
                               <Type className="w-3 h-3" /> Text Size
                             </span>
@@ -200,13 +326,26 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                                 type="range" 
                                 min="20" 
                                 max="120" 
-                                value={scene.subtitle_size || 60}
+                                value={getCurrentVal(index, 'subtitle_size') || 60}
                                 onChange={(e) => updateSceneConfig(index, { subtitle_size: parseInt(e.target.value) })}
                                 className="w-20 accent-primary"
                                 disabled={scene.show_image_only}
                               />
-                              <span className="text-[0.7rem] font-bold text-primary w-6">{scene.subtitle_size || 60}</span>
+                              <span className="text-[0.7rem] font-bold text-primary w-6">{getCurrentVal(index, 'subtitle_size') || 60}</span>
                             </div>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
+                              <Square className={`w-3 h-3 ${getCurrentVal(index, 'subtitle_bg_visible') !== false ? 'fill-gray-400' : ''}`} /> BG Box
+                            </span>
+                            <button 
+                              className={`px-3 py-1 text-[0.7rem] rounded font-bold transition-colors ${getCurrentVal(index, 'subtitle_bg_visible') !== false ? 'bg-primary text-white' : 'bg-gray-200 text-gray-500'}`}
+                              onClick={() => updateSceneConfig(index, { subtitle_bg_visible: getCurrentVal(index, 'subtitle_bg_visible') === false })}
+                              disabled={scene.show_image_only}
+                            >
+                              {getCurrentVal(index, 'subtitle_bg_visible') !== false ? 'ON' : 'OFF'}
+                            </button>
                           </div>
                         </div>
 
@@ -214,8 +353,43 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
-                              <Eye className="w-3 h-3" /> Visibility
+                              <Palette className="w-3 h-3" /> Color
                             </span>
+                            <div className="flex gap-1.5 Items-center">
+                              {[
+                                { name: 'White', color: '#FFFFFF' },
+                                { name: 'Yellow', color: '#FFFF00' },
+                                { name: 'Cyan', color: '#00FFFF' },
+                                { name: 'Green', color: '#00FF00' },
+                                { name: 'Red', color: '#FF0000' },
+                                { name: 'Orange', color: '#FFA500' },
+                                { name: 'Blue', color: '#0000FF' },
+                                { name: 'Pink', color: '#FFC0CB' },
+                                { name: 'Purple', color: '#800080' },
+                                { name: 'Black', color: '#000000' }
+                              ].map((c) => (
+                                <button
+                                  key={c.name}
+                                  className={`w-4 h-4 rounded-full border border-gray-300 transition-transform ${ (getCurrentVal(index, 'subtitle_color') || 'white').toLowerCase() === c.name.toLowerCase() ? 'scale-125 ring-2 ring-primary ring-offset-1' : 'hover:scale-110'}`}
+                                  style={{ backgroundColor: c.color }}
+                                  onClick={() => updateSceneConfig(index, { subtitle_color: c.name.toLowerCase() })}
+                                  title={c.name}
+                                  disabled={scene.show_image_only}
+                                />
+                              ))}
+                            </div>
+                          </div>
+
+                           <div className="flex items-center justify-between">
+                            <span className="text-[0.75rem] font-medium text-gray-600 flex items-center gap-1">
+                              <Type className="w-3 h-3" /> Style
+                            </span>
+                            <button 
+                              className={`flex items-center gap-1 px-2 py-1 rounded text-[0.7rem] font-bold transition-colors ${getCurrentVal(index, 'subtitle_bold') ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-400'}`}
+                              onClick={() => updateSceneConfig(index, { subtitle_bold: !getCurrentVal(index, 'subtitle_bold') })}
+                            >
+                              <Bold className="w-3 h-3" /> Bold
+                            </button>
                             <button 
                               className={`flex items-center gap-1 px-2 py-1 rounded text-[0.7rem] font-bold transition-colors ${scene.show_image_only ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}
                               onClick={() => updateSceneConfig(index, { show_image_only: !scene.show_image_only })}
@@ -327,8 +501,70 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                           </div>
                         </div>
                       </div>
-                    </div>
 
+                      {(index === 0 || index === data.scenes.length - 1) && (
+                        <div className="mt-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100/50">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[0.75rem] font-bold text-blue-700 flex items-center gap-1.5">
+                              <Mic className="w-3.5 h-3.5" /> 
+                              {index === 0 ? 'INTRO VOICE' : 'OUTRO VOICE'} (Custom)
+                            </span>
+                            {scene.custom_audio_url && (
+                              <button 
+                                onClick={() => removeSceneAudio(index)}
+                                className="text-red-500 hover:text-red-700 transition-colors"
+                                title="Remove Audio"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            {scene.custom_audio_url ? (
+                              <div className="flex-grow flex items-center gap-2">
+                                <audio 
+                                  src={`${API_BASE}${scene.custom_audio_url}`} 
+                                  controls 
+                                  className="h-8 flex-grow"
+                                />
+                                <span className="text-[0.7rem] font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded">
+                                  {scene.duration.toFixed(1)}s
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex-grow">
+                                <input 
+                                  type="file" 
+                                  id={`audio-file-${index}`} 
+                                  className="hidden" 
+                                  accept="audio/*"
+                                  onChange={(e) => uploadSceneAudio(index, e.target.files[0])}
+                                />
+                                <button 
+                                  className="w-full flex items-center justify-center gap-2 px-4 py-1.5 bg-white border border-blue-200 rounded text-blue-600 text-xs font-bold hover:bg-blue-50 transition-colors"
+                                  onClick={() => document.getElementById(`audio-file-${index}`).click()}
+                                  disabled={uploadingAudioIndex === index}
+                                >
+                                  {uploadingAudioIndex === index ? (
+                                    <Loader2 className="animate-spin w-3.5 h-3.5" />
+                                  ) : (
+                                    <Plus className="w-3.5 h-3.5" />
+                                  )}
+                                  Upload Custom Voice (.mp3/.wav)
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <p className="mt-1.5 text-[0.65rem] text-blue-400 font-medium">
+                            {scene.custom_audio_url 
+                              ? "✓ Custom voice will be used instead of AI." 
+                              : "Optional: Replace AI voice with your own recording for this scene."}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    
                     <div className="flex items-center mt-3 text-[0.75rem] text-gray-400">
                       <Clock className="w-3 h-3 mr-1" /> {scene.duration}s
                     </div>

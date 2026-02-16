@@ -13,7 +13,7 @@ import unicodedata
 import os
 import logging
 from pathlib import Path
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Dict, Any
 import subprocess
 import uuid
 import textwrap
@@ -251,14 +251,9 @@ class ComplexScriptRenderer:
         """
         from PIL import ImageFont, Image, ImageDraw
         
-        lines = []
-        
-        # For complex scripts, simple space-splitting may not work perfectly
-        # but it's better than splitting in the middle of ligatures
-        words = text.split()
-        
-        if not words:
-            return []
+        # Preserve explicit newlines by splitting into paragraphs first
+        paragraphs = text.split('\n')
+        all_wrapped_lines = []
         
         try:
             font = ImageFont.truetype(font_path, font_size)
@@ -269,72 +264,64 @@ class ComplexScriptRenderer:
         # Create a temporary image for measuring text
         temp_img = Image.new('RGB', (1, 1))
         draw = ImageDraw.Draw(temp_img)
-        
-        current_line = []
-        
-        for word in words:
-            # Test if adding this word would exceed the width
-            test_line = ' '.join(current_line + [word])
-            
-            try:
-                bbox = draw.textbbox((0, 0), test_line, font=font)
-                line_width = bbox[2] - bbox[0]
-            except Exception as e:
-                logger.warning(f"Could not measure text: {e}")
-                line_width = 0
-            
-            if line_width <= max_width_pixels:
-                # Word fits on current line
-                current_line.append(word)
-            else:
-                # Word doesn't fit
-                if current_line:
-                    # Save current line and start a new one
-                    lines.append(' '.join(current_line))
-                    current_line = [word]
+
+        for paragraph in paragraphs:
+            words = paragraph.split()
+            if not words:
+                # Preservation of empty lines if desired, or skip
+                # all_wrapped_lines.append("") 
+                continue
+                
+            current_line = []
+            for word in words:
+                # Test if adding this word would exceed the width
+                test_line = ' '.join(current_line + [word])
+                
+                try:
+                    bbox = draw.textbbox((0, 0), test_line, font=font)
+                    line_width = bbox[2] - bbox[0]
+                except Exception as e:
+                    logger.warning(f"Could not measure text: {e}")
+                    line_width = 0
+                
+                if line_width <= max_width_pixels:
+                    # Word fits on current line
+                    current_line.append(word)
                 else:
-                    # Word is so long it doesn't fit alone, must break it
-                    # This is a last resort for very long words
-                    logger.warning(f"Word '{word}' is too long to fit on one line. Breaking it (not ideal for complex scripts).")
-                    # For complex scripts, we try to at least keep it as one chunk
-                    # rather than breaking in the middle
-                    lines.append(word)
+                    # Word doesn't fit
+                    if current_line:
+                        # Save current line and start a new one
+                        all_wrapped_lines.append(' '.join(current_line))
+                        current_line = [word]
+                    else:
+                        # Word is so long it doesn't fit alone, must break it
+                        # This is a last resort for very long words
+                        logger.warning(f"Word '{word}' is too long to fit on one line. Breaking it.")
+                        all_wrapped_lines.append(word)
+                        current_line = []
+            
+            if current_line:
+                all_wrapped_lines.append(' '.join(current_line))
         
-        # Don't forget the last line
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        return lines
+        return all_wrapped_lines
     
     @staticmethod
     def generate_ass_file(
         text: str,
         output_path: Path,
         font_path: str,
-        font_size: int = 60,  # Increased font size
+        font_size: int = 60,
         duration: float = 5.0,
         resolution: str = "1080x1920",
         language: str = "en",
         margin_v: int = 100,
-        style: str = "static"
+        style: str = "static",
+        color: str = "white",
+        bg_visible: bool = True,
+        bold: bool = False,
+        line_styles: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """
-        Generate an ASS (Advanced Substation Alpha) subtitle file.
-        
-        Args:
-            text: Normalized text to display
-            output_path: Path to save the .ass file
-            font_path: Path to the font file
-            font_size: Font size
-            duration: Duration of the subtitle
-            resolution: Video resolution "WxH"
-            language: Language code
-            margin_v: Vertical margin from the bottom
-            style: "static" or "scroll_up"
-            
-        Returns:
-            Path to the generated .ass file
-        """
+        """Generate ASS file with complex script support and per-line styling"""
         width, height = resolution.split('x')
         width = int(width)
         height = int(height)
@@ -342,35 +329,34 @@ class ComplexScriptRenderer:
         # Windows path handling for ASS files
         font_path = str(font_path).replace('\\', '/')
         
-        # Alignment mapping: ASS Alignment 2 is Bottom Center, 5 is Middle Center
-        # We use 'style' parameter which now contains either 'bottom', 'center' or 'scroll_up'
+        # Alignment mapping
         ass_alignment = 5 if style == "center" else 2
         
-        # Style Definition for High Contrast/Readability:
-        # BorderStyle=3 (Opaque Box)
-        # BackColour=&H60000000 (Semi-transparent Black: 60 alpha)
-        # Outline=2 (Box padding effectively)
-        # Shadow=0
-        # Alignment=2 (Bottom Center) OR 5 (Middle Center)
-        # MarginL=40 (Left padding)
-        style_line = (
-            f"Style: Default,"
-            f"{os.path.basename(font_path)},"
-            f"{font_size},"
-            f"&H00FFFFFF,"        # PrimaryColour (White)
-            f"&H000000FF,"        # SecondaryColour
-            f"&H00000000,"        # OutlineColour
-            f"&H60000000,"        # BackColour (60% black box)
-            f"0,0,0,0,"           # Bold, Italic, Underline, StrikeOut
-            f"100,100,0,0,"       # ScaleX, ScaleY, Spacing, Angle
-            f"3,2,0,"             # BorderStyle=Box, Outline padding, Shadow=0
-            f"{ass_alignment},"   # Alignment
-            f"40,40,{margin_v},"  # MarginL, MarginR, MarginV
-            f"1"
+        color_map = {
+            'white': '&H00FFFFFF', 'yellow': '&H0000FFFF', 'cyan': '&H00FFFF00',
+            'green': '&H0000FF00', 'red': '&H000000FF', 'orange': '&H0000A5FF',
+            'blue': '&H00FF0000', 'pink': '&H00CBC0FF', 'purple': '&H00800080',
+            'black': '&H00000000'
+        }
+        
+        def get_ass_color(c_name, default_name='white'):
+            if not c_name: return color_map.get(default_name, '&H00FFFFFF')
+            return color_map.get(c_name.lower(), color_map.get(default_name, '&H00FFFFFF'))
+
+        primary_color = get_ass_color(color)
+        
+        # We'll define two styles: one with Box (3) and one without (1)
+        base_style_props = (
+            f"{os.path.basename(font_path)},{font_size},{primary_color},"
+            f"&H000000FF,&H00000000,&H60000000,"  # Sec, Out, Back
+            f"{1 if bold else 0},0,0,0,100,100,0,0" # Bold... Angle
         )
+        
+        # Style: Box (BorderStyle 3)
+        style_box = f"Style: StyleBox,{base_style_props},3,2,0,{ass_alignment},40,40,{margin_v},1"
+        # Style: NoBox (BorderStyle 1)
+        style_nobox = f"Style: StyleNoBox,{base_style_props},1,2,1,{ass_alignment},40,40,{margin_v},1"
 
-
-        # Create valid ASS header
         header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -380,47 +366,68 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-{style_line}
+{style_box}
+{style_nobox}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         
-        # Calculate duration in H:MM:SS.cs format
         def format_time(seconds):
-            h = int(seconds // 3600)
-            m = int((seconds % 3600) // 60)
-            s = int(seconds % 60)
-            cs = int((seconds * 100) % 100)
+            h, m, s, cs = int(seconds//3600), int((seconds%3600)//60), int(seconds%60), int((seconds*100)%100)
             return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
         
         end_time = format_time(duration)
+        lines = text.split('\n')
+        events = []
         
-        # Prepare text: Replace newlines with \N for ASS
-        # NOTE: We DO NOT double escape like for FFmpeg command line
-        ass_text = text.replace('\n', r'\N')
+        # Stacking logic (Reverse for Bottom Alignment)
+        current_margin_v = margin_v
         
-        # Apply scrolling effect if requested
-        # {\move(x1, y1, x2, y2)}
-        if style == "scroll_up":
-            # Start below screen, end above screen
-            # Centered horizontally
-            x_pos = width // 2
-            y_start = height + 50
-            y_end = -50
+        # Use provided line_styles or empty list
+        line_styles = line_styles or []
+        
+        # To stack properly from bottom up, we process lines in REVERSE order
+        # for Alignment 2 (Bottom)
+        for i in range(len(lines) - 1, -1, -1):
+            line_text = lines[i].strip()
+            if not line_text:
+                current_margin_v += int(font_size * 1.2)
+                continue
             
-            # Need to change alignment to 2 (Bottom Center) for better scroll look
-            # instead of using Alignment=1 from the style.
-            # We override it in the dialogue text.
-            display_text = f"{{\\an2\\move({x_pos}, {y_start}, {x_pos}, {y_end})}}{ass_text}"
-        else:
-            display_text = ass_text
+            l_style = line_styles[i] if i < len(line_styles) else {}
             
-        event_line = f"Dialogue: 0,0:00:00.00,{end_time},Default,,0,0,0,,{display_text}\n"
-        
+            # Determine base style name
+            l_bg_visible = l_style.get('subtitle_bg_visible', bg_visible)
+            style_name = "StyleBox" if l_bg_visible else "StyleNoBox"
+            
+            # Build override tags
+            tags = []
+            l_color_name = l_style.get('subtitle_color')
+            if l_color_name:
+                tags.append(f"\\c{get_ass_color(l_color_name)}")
+                
+            l_size = l_style.get('subtitle_size')
+            if l_size:
+                tags.append(f"\\fs{l_size}")
+            else:
+                l_size = font_size
+                
+            l_bold = l_style.get('subtitle_bold')
+            if l_bold is not None:
+                tags.append(f"\\b{1 if l_bold else 0}")
+            
+            tag_str = f"{{{(''.join(tags))}}}" if tags else ""
+            events.append(f"Dialogue: 0,0:00:00.00,{end_time},{style_name},,0,0,{current_margin_v},,{tag_str}{line_text}")
+            
+            # Move up for next line
+            current_margin_v += int(l_size * 1.3)
+            
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(header)
-            f.write(event_line)
+            # Reversing events so they appear in correct order in the file (just for cleanliness)
+            for ev in reversed(events):
+                f.write(ev + "\n")
             
-        logger.info(f"✓ Generated ASS file: {output_path}")
+        logger.info(f"✓ Generated Per-Line ASS file: {output_path}")
         return str(output_path)

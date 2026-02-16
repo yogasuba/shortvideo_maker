@@ -272,6 +272,7 @@ function App() {
             setScript={setScript}
             language={language}
             scenesCount={scenesCount}
+            scenesPreview={scenesPreview}
             setScenesPreview={setScenesPreview}
             setShowPreviewModal={setShowPreviewModal}
             prevStep={() => prevStep(1)}

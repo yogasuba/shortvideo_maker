@@ -1,12 +1,13 @@
-import React from 'react';
-import { Pencil, Eye } from 'lucide-react';
+import React, { useState } from 'react';
+import { Pencil, Eye, Settings2 } from 'lucide-react';
 
 const WriteScriptStep = ({ 
   script, setScript, 
   language, scenesCount, 
-  setScenesPreview, setShowPreviewModal,
+  scenesPreview, setScenesPreview, setShowPreviewModal,
   prevStep, nextStep, addAlert, API_BASE 
 }) => {
+  const [lastScript, setLastScript] = useState(scenesPreview ? script : '');
   
   const scriptCount = script.length;
   
@@ -41,6 +42,12 @@ const WriteScriptStep = ({
       document.getElementById('previewBtn').innerHTML = '<span class="loading-spinner"></span> Analyzing script...';
     }
 
+    // If script hasn't changed and we already have a preview, just open it
+    if (scenesPreview && script === lastScript) {
+      setShowPreviewModal(true);
+      return;
+    }
+
     try {
       const response = await fetch(`${API_BASE}/api/scripts/preview`, {
         method: 'POST',
@@ -54,6 +61,7 @@ const WriteScriptStep = ({
       const data = await response.json();
       if (data.success) {
         setScenesPreview(data.data);
+        setLastScript(script);
         setShowPreviewModal(true);
       } else {
         throw new Error('Failed to preview script');
@@ -109,13 +117,24 @@ const WriteScriptStep = ({
           </div>
         </div>
         
-        <button 
-          className="btn-primary-custom w-full py-4 flex items-center justify-center" 
-          onClick={previewScriptSplit}
-          id="previewBtn"
-        >
-          <Eye className="mr-2" /> Preview Split Scene
-        </button>
+        <div className="flex flex-col gap-3">
+          <button 
+            className="btn-primary-custom w-full py-4 flex items-center justify-center font-bold" 
+            onClick={previewScriptSplit}
+            id="previewBtn"
+          >
+            <Eye className="mr-2" /> {scenesPreview && script === lastScript ? 'Re-Analyze Script' : 'Analyze & Preview Split'}
+          </button>
+
+          {scenesPreview && (
+            <button 
+              className="bg-gray-100 text-gray-700 hover:bg-gray-200 w-full py-3 rounded-xl flex items-center justify-center transition-all border border-gray-200"
+              onClick={() => setShowPreviewModal(true)}
+            >
+              <Settings2 className="w-4 h-4 mr-2" /> View/Edit Current Scene Settings
+            </button>
+          )}
+        </div>
         
         <div className="mt-4 text-center">
           <button className="text-gray-500 hover:text-primary transition-colors font-medium" onClick={prevStep}>

@@ -174,6 +174,9 @@ class VideoCreateRequest(BaseModel):
     resolution: str = "1080x1920"
     scenes_count: int = Field(8, ge=4, le=16)
     subtitle_style: str = "static"  # Options: "static", "scroll_up"
+    subtitle_color: str = "white"
+    subtitle_bg_visible: bool = True
+    subtitle_bold: bool = False
     scenes: Optional[List[Dict[str, Any]]] = None
     
     @field_validator('language')
@@ -1082,7 +1085,11 @@ class VideoGenerator:
                 subtitle_style=subtitle_style,
                 subtitle_position=scene.get("subtitle_position", "bottom"),
                 subtitle_size=scene.get("subtitle_size", 60),
-                rotation=scene.get("rotation", 0)
+                subtitle_color=scene.get("subtitle_color", "white"),
+                subtitle_bg_visible=scene.get("subtitle_bg_visible", True),
+                subtitle_bold=scene.get("subtitle_bold", False),
+                rotation=scene.get("rotation", 0),
+                line_styles=scene.get("line_styles", [])
             )
             
             if scene_path:
@@ -1139,7 +1146,11 @@ class VideoGenerator:
                                            subtitle_style: str = "static", 
                                            subtitle_position: str = "bottom",
                                            subtitle_size: int = 60,
-                                           rotation: int = 0) -> Optional[str]:
+                                           subtitle_color: str = "white",
+                                           subtitle_bg_visible: bool = True,
+                                           subtitle_bold: bool = False,
+                                           rotation: int = 0,
+                                           line_styles: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """Create scene video with proper complex script handling
         
         CRITICAL PIPELINE CHANGE:
@@ -1160,12 +1171,40 @@ class VideoGenerator:
                     image_path, audio_path, output_path, duration, text, resolution, language,
                     subtitle_position=subtitle_position,
                     subtitle_size=subtitle_size,
-                    rotation=rotation
+                    subtitle_color=subtitle_color,
+                    subtitle_bg_visible=subtitle_bg_visible,
+                    subtitle_bold=subtitle_bold,
+                    rotation=rotation,
+                    line_styles=line_styles
                 )
             
             # === COMPLEX SCRIPT PIPELINE (ASS/LIBASS) ===
             logging.info(f"Entering Complex Script Pipeline (LIBASS) for {language}")
             
+            return await self._create_scene_with_complex_script(
+                image_path, audio_path, output_path, duration, text, 
+                resolution, language, subtitle_style, subtitle_position, 
+                subtitle_size, subtitle_color, subtitle_bg_visible, subtitle_bold, rotation,
+                line_styles=line_styles
+            )
+        except Exception as e:
+            logging.error(f"Error in simple text creation: {e}")
+            return None
+
+    async def _create_scene_with_complex_script(self, image_path: str, audio_path: str, 
+                                              output_path: Path, duration: float, 
+                                              text: str, resolution: str = "1080x1920", language: str = "en",
+                                              subtitle_style: str = "static",
+                                              subtitle_position: str = "bottom",
+                                              subtitle_size: int = 60,
+                                              subtitle_color: str = "white",
+                                              subtitle_bg_visible: bool = True,
+                                              subtitle_bold: bool = False,
+                                              rotation: int = 0,
+                                              line_styles: Optional[List[Dict[str, Any]]] = None) -> str:
+        """Create scene video using LIBASS/ASS pipeline for complex scripts"""
+        try:
+            renderer = self.complex_script_renderer
             # 1. Find Font
             font_path = renderer.find_font(language)
             if not font_path:
@@ -1220,15 +1259,19 @@ class VideoGenerator:
             ass_file_path.parent.mkdir(parents=True, exist_ok=True)
             
             renderer.generate_ass_file(
-                wrapped_text,
+                text,
                 ass_file_path,
                 font_path,
-                font_size,
-                duration,
-                resolution,
-                language,
+                font_size=font_size,
+                duration=duration,
+                resolution=resolution,
+                language=language,
                 margin_v=margin_v,
-                style=subtitle_style
+                style=subtitle_position if subtitle_style == "static" else subtitle_style,
+                color=subtitle_color,
+                bg_visible=subtitle_bg_visible,
+                bold=subtitle_bold,
+                line_styles=line_styles
             )
             
             # 4. Generate Clean Video (Image + Audio) - Intermediate
@@ -1292,7 +1335,11 @@ class VideoGenerator:
                                             text: str, resolution: str = "1080x1920", language: str = "en",
                                             subtitle_position: str = "bottom",
                                             subtitle_size: int = 60,
-                                            rotation: int = 0) -> Optional[str]:
+                                            subtitle_color: str = "white",
+                                            subtitle_bg_visible: bool = True,
+                                            subtitle_bold: bool = False,
+                                            rotation: int = 0,
+                                            line_styles: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """Fallback PIL-based text rendering for simple scripts ONLY
         
         WARNING: Complex scripts (Tamil, Hindi, etc.) MUST NOT use PIL rendering.
@@ -1375,53 +1422,92 @@ class VideoGenerator:
                 else:
                     fitting = False
             
-            # Draw text with background
-            bbox_sample = draw.textbbox((0, 0), "Ayg", font=font)
-            line_height = (bbox_sample[3] - bbox_sample[1]) + 15
-            total_height = len(lines) * line_height
+            # === STYLING & RENDERING ===
+            color_map = {
+                'white': (255, 255, 255), 'yellow': (255, 255, 0), 'cyan': (0, 255, 255),
+                'green': (0, 255, 0), 'red': (255, 0, 0), 'orange': (255, 165, 0),
+                'blue': (0, 0, 255), 'pink': (255, 192, 203), 'purple': (128, 0, 128),
+                'black': (0, 0, 0)
+            }
+
+            def get_font_for_line(size, is_bold):
+                f_path = font_path
+                if is_bold:
+                    if os.name == 'nt':
+                        font_path_bold = "C:/Windows/Fonts/arialbd.ttf"
+                        if os.path.exists(font_path_bold): f_path = font_path_bold
+                    else:
+                        font_path_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                        if os.path.exists(font_path_bold): f_path = font_path_bold
+                try:
+                    return ImageFont.truetype(f_path, size)
+                except:
+                    return ImageFont.load_default()
+
+            if line_styles:
+                lines = text.split('\n')
             
-            y_start = img.height - total_height - (img.height * 0.15)
-            
-            # Background image preparation with rotation
-            if rotation != 0:
-                img = img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
-            
-            # Draw semi-transparent background
+            prepared_lines = []
+            total_height = 0
             padding = 15
-            box_fill = (0, 0, 0, 160)
-            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-            overlay_draw = ImageDraw.Draw(overlay)
-            
-            # Calculate position
+            l_styles = line_styles or []
+
+            for i, line_text in enumerate(lines):
+                line_text = line_text.strip()
+                if not line_text:
+                    total_height += int(subtitle_size * 1.2)
+                    prepared_lines.append(None)
+                    continue
+                
+                l_style = l_styles[i] if i < len(l_styles) else {}
+                l_size = l_style.get('subtitle_size', subtitle_size)
+                l_bold = l_style.get('subtitle_bold', subtitle_bold)
+                l_font = get_font_for_line(l_size, l_bold)
+                
+                l_bbox = draw.textbbox((0, 0), line_text, font=l_font)
+                l_w = l_bbox[2] - l_bbox[0]
+                l_h = (l_bbox[3] - l_bbox[1]) + 15
+                
+                prepared_lines.append({
+                    'text': line_text,
+                    'font': l_font,
+                    'color': color_map.get((l_style.get('subtitle_color') or subtitle_color).lower(), (255, 255, 255)),
+                    'bg_visible': l_style.get('subtitle_bg_visible', subtitle_bg_visible),
+                    'width': l_w,
+                    'height': l_h
+                })
+                total_height += l_h
+
             if subtitle_position == 'center':
                 y_start = (img.height - total_height) // 2
             else: # bottom
                 y_start = img.height - total_height - (img.height * 0.15)
             
-            for i, line in enumerate(lines):
-                line_bbox = overlay_draw.textbbox((0, 0), line, font=font)
-                line_w = line_bbox[2] - line_bbox[0]
-                line_h = line_bbox[3] - line_bbox[1]
-                lx = (img.width - line_w) // 2
-                ly = y_start + (i * line_height)
-                
-                overlay_draw.rectangle(
-                    [(lx - padding, ly - 5), 
-                     (lx + line_w + padding, ly + line_h + 10)],
-                    fill=box_fill
-                )
+            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            box_fill = (0, 0, 0, 160)
             
-            img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
-            draw = ImageDraw.Draw(img)
+            current_y = y_start
+            for l_data in prepared_lines:
+                if l_data is None:
+                    current_y += int(subtitle_size * 1.2)
+                    continue
+                lx = (img.width - l_data['width']) // 2
+                if l_data['bg_visible']:
+                    overlay_draw.rectangle(
+                        [lx - padding, current_y, lx + l_data['width'] + padding, current_y + l_data['height']],
+                        fill=box_fill
+                    )
+                overlay_draw.text((lx, current_y), l_data['text'], font=l_data['font'], fill=l_data['color'])
+                current_y += l_data['height']
             
-            # Draw each line centered
-            for i, line in enumerate(lines):
-                bbox = draw.textbbox((0, 0), line, font=font)
-                w = bbox[2] - bbox[0]
-                x = (img.width - w) // 2
-                y = y_start + (i * line_height)
-                draw.text((x, y), line, font=font, fill='white')
+            # Rotation (Apply to both)
+            if rotation != 0:
+                img = img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+                overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
             
+            img = img.convert('RGBA')
+            img = Image.alpha_composite(img, overlay).convert('RGB')
             img.save(str(temp_image), "PNG", quality=95)
             
             # Now create video with this image
@@ -1667,17 +1753,29 @@ class VideoGenerator:
                 project["status_message"] = f"Generating scene {i+1}/{total_scenes}..."
                 
                 # Generate audio
-                # Use voice_over if available, otherwise fallback to text
+                # Priority:
+                # 1. Custom uploaded audio
+                # 2. AI Generated voice_over
+                # 3. Silent audio
+                custom_audio_path = scene.get("custom_audio_path")
                 show_image_only = scene.get("show_image_only", False)
-                voice_text = "" if show_image_only else scene.get("voice_over", scene["text"])
                 
-                if voice_text:
+                if custom_audio_path and os.path.exists(custom_audio_path):
+                    logging.info(f"Using custom audio for scene {i+1}: {custom_audio_path}")
+                    duration = video_gen._get_audio_duration(Path(custom_audio_path))
+                    audio_info = {
+                        "path": custom_audio_path,
+                        "duration": duration,
+                        "url": scene.get("custom_audio_url", "")
+                    }
+                elif not show_image_only and scene.get("voice_over", scene.get("text")):
+                    voice_text = scene.get("voice_over", scene["text"])
                     audio_info = await self.generate_audio(voice_text, request.language, request.voice)
                 else:
                     # Create silent audio for the specified duration
                     audio_info = await self._create_silent_audio(scene.get("duration", 5.0))
                 
-                if not audio_info["path"]:
+                if not audio_info.get("path"):
                     logging.error(f"Failed to generate audio for scene {i+1}")
                     continue
                 
@@ -2144,6 +2242,42 @@ async def download_video(video_filename: str):
         filename=video_filename,
         media_type='video/mp4'
     )
+
+@app.post("/api/upload/scene-audio")
+async def upload_scene_audio(file: UploadFile = File(...)):
+    """Upload a custom audio file for a scene"""
+    try:
+        # Create audio directory if it doesn't exist
+        audio_dir = Config.STORAGE_DIR / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate a unique filename
+        file_extension = Path(file.filename).suffix
+        if not file_extension:
+            file_extension = ".mp3"
+        
+        filename = f"custom_voice_{uuid.uuid4().hex[:8]}{file_extension}"
+        file_path = audio_dir / filename
+        
+        # Save the file
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        
+        # Get duration
+        duration = video_gen._get_audio_duration(file_path)
+        
+        return {
+            "success": True,
+            "data": {
+                "url": f"/storage/audio/{filename}",
+                "path": str(file_path),
+                "duration": duration
+            }
+        }
+    except Exception as e:
+        logging.error(f"Failed to upload scene audio: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/upload/scene-image")
 async def upload_scene_image(file: UploadFile = File(...)):
