@@ -227,6 +227,14 @@ function App() {
     addAlert('Ready to create another video!', 'success');
   };
 
+  const handleEdit = () => {
+    setIsCompleted(false);
+    setIsGenerating(false);
+    setProgress(0);
+    setCurrentStep(2);
+    setShowPreviewModal(true);
+  };
+
   const toggleTheme = () => {
     setIsDarkTheme(!isDarkTheme);
     document.body.classList.toggle('dark-theme');
@@ -314,6 +322,7 @@ function App() {
             videoUrl={currentVideoUrl}
             orientation={orientation}
             resetForm={resetForm}
+            onEdit={handleEdit}
             API_BASE={API_BASE}
             addAlert={addAlert}
           />

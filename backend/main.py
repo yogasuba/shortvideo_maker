@@ -347,24 +347,36 @@ MUST output ONLY the JSON array.
         openai_key = os.getenv("OPENAI_API_KEY")
         if openai_key and (openai_key.startswith("sk-") or openai_key.startswith("sk-proj-")):
             try:
-                logging.info("DEBUG: Attempting OpenAI Direct...")
+                logging.info(f"DEBUG: Attempting OpenAI Direct for {lang_name}...")
                 client = AsyncOpenAI(api_key=openai_key)
-                # Use GPT-4o if possible, fallback to gpt-3.5-turbo
                 for model in ["gpt-4o", "gpt-3.5-turbo"]:
-                    voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
-                    if voice_overs:
-                        logging.info(f"✓ Success with OpenAI Direct model: {model}")
-                        break
+                    try:
+                        voice_overs = await asyncio.wait_for(
+                            generate_with_client(client, model, system_prompt, user_prompt),
+                            timeout=30
+                        )
+                        if voice_overs:
+                            logging.info(f"✓ Success with OpenAI Direct model: {model}")
+                            break
+                    except asyncio.TimeoutError:
+                        logging.error(f"OpenAI Direct ({model}) request timed out")
+                    except Exception as e:
+                        if "insufficient_quota" in str(e):
+                            logging.error(f"OpenAI Quota Exceeded: {e}")
+                            break # Don't try other models if quota is gone
+                        logging.error(f"OpenAI model {model} failed: {e}")
             except Exception as e:
                 logging.error(f"OpenAI Direct setup failed: {e}")
 
         # 2. Try OpenRouter (if OpenAI failed or key missing)
         if not voice_overs:
             openrouter_key = os.getenv("OPENROUTER_API_KEY")
-            # Only try OpenRouter if it's NOT an OpenAI key used mistakenly as OpenRouter key
-            if openrouter_key and not (openrouter_key.startswith("sk-proj-") or openrouter_key.startswith("sk-")):
+            if openrouter_key:
+                # Warning: Use OpenAI keys with OpenAI, and OpenRouter keys with OpenRouter
+                is_openai_key = openrouter_key.startswith("sk-proj-") or openrouter_key.startswith("sk-")
+                
                 try:
-                    logging.info("DEBUG: Attempting OpenRouter...")
+                    logging.info(f"DEBUG: Attempting OpenRouter for {lang_name}...")
                     client = AsyncOpenAI(
                         api_key=openrouter_key,
                         base_url="https://openrouter.ai/api/v1"
@@ -372,31 +384,39 @@ MUST output ONLY the JSON array.
                     # Try a few reliable FREE models on OpenRouter
                     models = [
                         "google/gemini-2.0-flash-exp:free",
-                        "google/gemini-2.0-flash-thinking-exp:free",
-                        "mistralai/pixtral-12b:free",
-                        "qwen/qwen-2-7b-instruct:free",
+                        "google/gemini-pro-1.5-exp",
+                        "mistralai/mistral-7b-instruct:free",
                         "openai/gpt-3.5-turbo"
                     ]
                     
                     for model in models:
-                        voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
-                        if voice_overs:
-                            logging.info(f"✓ Success with OpenRouter model: {model}")
-                            break
+                        try:
+                            voice_overs = await asyncio.wait_for(
+                                generate_with_client(client, model, system_prompt, user_prompt),
+                                timeout=30
+                            )
+                            if voice_overs:
+                                logging.info(f"✓ Success with OpenRouter model: {model}")
+                                break
+                        except asyncio.TimeoutError:
+                            logging.warning(f"Timeout with OpenRouter model: {model}")
+                        except Exception as e:
+                            logging.error(f"OpenRouter model {model} failed: {e}")
                 except Exception as e:
                     logging.error(f"OpenRouter setup failed: {e}")
 
         # Apply results or fallback
         if voice_overs:
-            logging.info("DEBUG: Applying generated voice-overs.")
+            logging.info(f"DEBUG: Applying generated voice-overs for language {language} ({lang_name}).")
             for i, scene in enumerate(scenes):
                 # Safety check for duplicates
                 if voice_overs[i].strip().lower() == scene["text"].strip().lower():
                     logging.warning(f"Scene {i+1} voice-over identical to text. AI ignored instructions.")
                 
                 scene["voice_over"] = voice_overs[i]
+                logging.info(f"DEBUG: Scene {i+1} Voice-Over: {voice_overs[i][:50]}...")
         else:
-            logging.warning("ALL AI GENERATION FAILED. Falling back to using scene description as voice-over.")
+            logging.warning(f"ALL AI GENERATION FAILED for {lang_name}. Falling back to using scene description as voice-over.")
             for scene in scenes:
                 scene["voice_over"] = scene["text"]
         return scenes
@@ -587,9 +607,10 @@ class VideoGenerator:
             cmd = [
                 Config.get_ffmpeg(),
                 "-f", "lavfi",
-                "-i", f"anullsrc=r=44100:cl=mono",
+                "-i", f"anullsrc=r=44100:cl=stereo",
                 "-t", str(duration),
-                "-q:a", "9",
+                "-ar", "44100",
+                "-ac", "2",
                 "-acodec", "libmp3lame",
                 "-y",
                 str(audio_file)
@@ -1058,8 +1079,8 @@ class VideoGenerator:
             
             # Priority: Use PIL-based text overlay (Method 2) first, as it's more robust on Windows
             logging.info(f"Creating scene video for scene {scene['scene_number']}...")
-            # Subtitle should be narration.
-            subtitle_text = scene.get('voice_over', scene.get('text', ''))
+            # Subtitle should be the visual text (Visual Prompt).
+            subtitle_text = scene.get('text', scene.get('voice_over', ''))
             
             # Determine final duration
             # Priority:
@@ -1282,10 +1303,14 @@ class VideoGenerator:
             cmd_base = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
+                "-r", "30",
                 "-i", image_path,
                 "-i", audio_path,
                 "-c:v", "libx264",
+                "-r", "30",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-pix_fmt", "yuv420p",
                 "-vf", f"rotate={rotation}*PI/180:ow='max(iw,ih)':oh='max(iw,ih)',"
                        f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -1514,10 +1539,14 @@ class VideoGenerator:
             cmd = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
+                "-r", "30",
                 "-i", str(temp_image),
                 "-i", audio_path,
                 "-c:v", "libx264",
+                "-r", "30",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -1562,12 +1591,16 @@ class VideoGenerator:
             cmd = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
+                "-r", "30",
                 "-i", str(image_path),
                 "-i", str(audio_path),
                 "-c:v", "libx264",
+                "-r", "30",
                 "-preset", "fast",
                 "-crf", "23",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -1762,7 +1795,7 @@ class VideoGenerator:
                 
                 if custom_audio_path and os.path.exists(custom_audio_path):
                     logging.info(f"Using custom audio for scene {i+1}: {custom_audio_path}")
-                    duration = video_gen._get_audio_duration(Path(custom_audio_path))
+                    duration = self._get_audio_duration(Path(custom_audio_path))
                     audio_info = {
                         "path": custom_audio_path,
                         "duration": duration,
@@ -1947,20 +1980,30 @@ class VideoGenerator:
             for video in video_files:
                 cmd.extend(["-i", video])
             
-            # Build filter complex
+            # Build filter complex with stream normalization
             filter_parts = []
             for i in range(len(video_files)):
-                filter_parts.append(f"[{i}:v]")
-                filter_parts.append(f"[{i}:a]")
+                # Normalize each stream: constant frame rate and constant sample rate
+                filter_parts.append(f"[{i}:v]fps=30,format=yuv420p[v{i}];")
+                filter_parts.append(f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{i}];")
             
-            filter_complex = "".join(filter_parts) + f"concat=n={len(video_files)}:v=1:a=1[outv][outa]"
+            # Concatenate normalized streams
+            concat_inputs = ""
+            for i in range(len(video_files)):
+                concat_inputs += f"[v{i}][a{i}]"
+            
+            concat_filter = f"{concat_inputs}concat=n={len(video_files)}:v=1:a=1[outv][outa]"
+            filter_complex = "".join(filter_parts) + concat_filter
             
             cmd.extend([
                 "-filter_complex", filter_complex,
                 "-map", "[outv]",
                 "-map", "[outa]",
                 "-c:v", "libx264",
+                "-r", "30",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-movflags", "+faststart",
                 "-y",
                 str(output_file)
@@ -2329,4 +2372,4 @@ if __name__ == "__main__":
     print("• Multiple languages support")
     print("=" * 50)
     
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=port, reload=True)

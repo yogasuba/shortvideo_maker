@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, CheckCircle, Download, PlusCircle } from 'lucide-react';
+import { Loader2, CheckCircle, Download, PlusCircle, Pencil } from 'lucide-react';
 
 const GenerationProgressStep = ({ 
   progress, 
@@ -10,6 +10,7 @@ const GenerationProgressStep = ({
   videoUrl,
   orientation,
   resetForm,
+  onEdit,
   API_BASE,
   addAlert
 }) => {
@@ -97,6 +98,12 @@ const GenerationProgressStep = ({
                 onClick={resetForm}
               >
                 <PlusCircle className="mr-2 w-5 h-5" /> Create Another
+              </button>
+              <button 
+                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold flex items-center justify-center hover:bg-gray-200 transition-all w-full sm:w-auto"
+                onClick={onEdit}
+              >
+                <Pencil className="mr-2 w-5 h-5" /> Edit Settings
               </button>
             </div>
           </div>
