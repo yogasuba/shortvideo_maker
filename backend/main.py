@@ -3,7 +3,7 @@ import json
 import uuid
 import asyncio
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import logging
@@ -52,8 +52,8 @@ from exceptions import (
 
 # New Integrations
 from database import init_db, get_db, Integration, ScheduledPost
-from facebook_manager import facebook_manager
 from scheduler import start_scheduler
+from postiz_client import PostizClient
 from postiz_client import PostizClient
 from database import init_db, get_db, Integration, ScheduledPost, PostizIntegration
 from postiz_auth import PostizAuthService
@@ -2141,18 +2141,9 @@ async def upload_scene_image(file: UploadFile = File(...)):
 
 # ========== FACEBOOK ROUTES ==========
 
-@app.get("/api/facebook/auth-url")
-async def get_fb_auth_url():
-    """Generate Facebook login URL"""
-    state = uuid.uuid4().hex[:10]
-    # In a real app, you'd store state in session/DB to verify in callback
-    redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/facebook-callback"
-    url = facebook_manager.get_auth_url(redirect_uri, state)
-    return {"success": True, "url": url}
-
 @app.get("/api/facebook/integrations")
 async def get_fb_integrations(db: Session = Depends(get_db)):
-    """List connected Facebook pages"""
+    """List connected Facebook pages (DEPRECATED - Use Postiz integrations instead)"""
     integrations = db.query(Integration).filter(Integration.is_active == True).all()
     # Serialize for JSON
     data = []
@@ -2231,7 +2222,6 @@ async def fb_schedule(
             project_id=project_id,
             integration_id=integration_id,
             video_path=video_path,
-            media_url=video_path,
             caption=caption or project.get("title", ""),
             schedule_time=utc_dt,
             status="scheduled"
@@ -2266,45 +2256,6 @@ async def get_scheduled_posts(db: Session = Depends(get_db)):
         logging.error(f"Error fetching scheduled posts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/scheduler/status")
-async def get_scheduler_status(db: Session = Depends(get_db)):
-    """Health check for the scheduling system"""
-    from sqlalchemy import func
-    try:
-        stats = db.query(
-            ScheduledPost.status, 
-            func.count(ScheduledPost.id)
-        ).group_by(ScheduledPost.status).all()
-        
-        status_map = {s: count for s, count in stats}
-        
-        next_job = db.query(ScheduledPost).filter(
-            ScheduledPost.status.in_(["scheduled", "failed_retry"])
-        ).order_by(ScheduledPost.schedule_time.asc()).first()
-        
-        # Check worker heartbeat (simple check: if any job was started in last 5 mins)
-        five_mins_ago = datetime.now(timezone.utc) - timedelta(minutes=5)
-        recent_activity = db.query(ScheduledPost).filter(
-            ScheduledPost.processing_started_at.isnot(None),
-            ScheduledPost.processing_started_at > five_mins_ago
-        ).first()
-
-        now_utc = datetime.now(timezone.utc)
-        print("MARKER: HEALTH CHECK HIT")
-        return {
-            "success": True,
-            "data": {
-                "stats": status_map,
-                "next_job_at": next_job.schedule_time.isoformat() if next_job and next_job.schedule_time else None,
-                "worker_status": "active" if recent_activity else "idle_or_down",
-                "server_time_utc": now_utc.isoformat()
-            }
-        }
-    except Exception as e:
-        import traceback
-        logging.error(f"Scheduler Status Error: {e}")
-        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
-
 # ========== RUN SERVER ==========
 
 import asyncio
@@ -2334,16 +2285,17 @@ postiz_auth_service = PostizAuthService(
 async def combined_startup_event():
     import sys
     print("COMBINED STARTUP: Initializing...", flush=True, file=sys.stderr)
+    
+    # 1. Initialize DB
     try:
         init_db()
         print("COMBINED STARTUP: DB Initialized.", flush=True, file=sys.stderr)
-        # start_scheduler() # DEPRECATED: Using separate scheduler_worker.py via PM2
-        # print("COMBINED STARTUP: Scheduler Started.", flush=True, file=sys.stderr)
     except Exception as e:
-        print(f"STARTUP ERROR: {e}", flush=True, file=sys.stderr)
+        print(f"STARTUP DB ERROR: {e}", flush=True, file=sys.stderr)
         import traceback
         traceback.print_exc()
 
+    # 2. Initialize Postiz Client & Scheduler
     global postiz_client
     if Config.POSTIZ_ENABLED and Config.POSTIZ_API_KEY and PostizClient:
         try:
@@ -2355,12 +2307,21 @@ async def combined_startup_event():
             await postiz_client.__aenter__() 
             logging.info(f"Postiz Client initialized at {Config.POSTIZ_BASE_URL}")
             
+            # Start Scheduler with Client
+            start_scheduler(client=postiz_client)
+            print("COMBINED STARTUP: Scheduler Started with Client.", flush=True, file=sys.stderr)
+            
             # Pre-fetch user ID for headless auth
             if Config.POSTIZ_JWT_SECRET:
                 # Run in background to not block startup
                 asyncio.create_task(asyncio.to_thread(postiz_auth_service.get_user_id))
         except Exception as e:
             logging.error(f"Failed to initialize Postiz client: {e}")
+            # Start scheduler without client (warns in logs)
+            start_scheduler(client=None)
+    else:
+        start_scheduler(client=None)
+        print("COMBINED STARTUP: Scheduler Started (No Client).", flush=True, file=sys.stderr)
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -2422,6 +2383,28 @@ async def get_postiz_integrations(
         logging.error(f"Postiz Sync Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/postiz/integrations/{integration_id}")
+async def delete_postiz_integration(
+    integration_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete an integration from Postiz (Headless)"""
+    if not postiz_client:
+        raise HTTPException(status_code=400, detail="Postiz integration disabled")
+    
+    try:
+        # 1. Delete from Postiz
+        await postiz_client.delete_integration(integration_id)
+        
+        # 2. Delete from local DB cache
+        db.query(PostizIntegration).filter(PostizIntegration.id == integration_id).delete()
+        db.commit()
+        
+        return {"success": True, "message": "Integration deleted successfully"}
+    except Exception as e:
+        logging.error(f"Postiz Delete Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/postiz/auth-url/{provider}")
 async def get_postiz_auth_url(provider: str, callback_url: str):
     """Get the OAuth URL for a provider from Postiz (Headless)"""
@@ -2460,72 +2443,6 @@ async def connect_postiz_page(integration_id: str, payload: Dict[str, str]):
     if "error" in result:
         raise HTTPException(status_code=500, detail=result.get("details", result["error"]))
     return {"success": True, "data": result}
-    """
-    Initiate OAuth flow for social media platform via Postiz
-    Returns the OAuth URL to redirect user to
-    """
-    if not Config.POSTIZ_ENABLED or not Config.POSTIZ_API_KEY:
-        raise HTTPException(status_code=400, detail="Postiz integration disabled")
-
-    try:
-        # Get OAuth URL from Postiz
-        # Note: Postiz API might need different handling based on version
-        # For now assuming standard Postiz structure
-        url = f"{Config.POSTIZ_BASE_URL}/api/v1/integrations/social/{provider}/auth"
-        
-        # We need to use internal Postiz logic or API if available
-        # Actually, Postiz usually handles auth via frontend > backend redirection
-        # But if we want to bypass Postiz frontend, we need to hit the backend directly
-        # and get the redirection URL
-        
-        headers = {"Authorization": f"Bearer {Config.POSTIZ_API_KEY}"}
-        
-        # This endpoint might vary based on Postiz version. 
-        # Checking common pattern: GET /integrations/connect/{provider} 
-        # or we might need to construct the URL manually if Postiz frontend does it.
-        
-        # Let's try to fetch from Postiz backend (assuming it exposes an auth endpoint)
-        # If not, we might need to redirect user to Postiz frontend specific page.
-        # But user wants to avoid login.
-        
-        # Alternative: Use the 'connect' endpoint if it returns a URL
-        # Trying a likely endpoint for obtaining auth URL
-        response = requests.get(
-            f"{Config.POSTIZ_BASE_URL}/api/v1/integrations/{provider}/auth-url", 
-            headers=headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            return {"success": True, "oauth_url": data.get("url"), "provider": provider}
-            
-        # Fallback: Construct URL if we know the pattern
-        # This is risky without knowing exact Postiz API
-        
-        # Try another endpoint pattern often used in Postiz forks
-        response = requests.get(
-            f"{Config.POSTIZ_BASE_URL}/api/v1/integrations/social/{provider}", 
-            headers=headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-             # Maybe it returns auth url?
-             pass
-        
-        # If all else fails, returning a specific error that frontend can capture
-        # and maybe direct user to backup plan (Postiz UI)
-        return {"success": False, "error": "Could not retrieve connection URL from Postiz API. Please use Postiz Dashboard."}
-
-    except Exception as e:
-        logging.error(f"Failed to initiate connection: {e}")
-        return {"success": False, "error": str(e)}
-
-@app.get("/api/postiz/callback-handle")
-async def postiz_callback_handle():
-    """Placeholder for potential server-side redirect handling if needed"""
-    return {"success": True, "message": "Callback received"}
 
 class ScheduleRequest(BaseModel):
     video_id: str
@@ -2571,22 +2488,8 @@ async def upload_and_schedule(
         raise HTTPException(status_code=404, detail=f"Video file not found for ID: {req.video_id}")
 
     try:
-        # 1. Upload
-        logging.info(f"Uploading {video_path}...")
-        media = await postiz_client.upload_video(str(video_path))
-        
-        # 2. Schedule
-        logging.info("Scheduling post...")
-        post = await postiz_client.create_post(
-            media_items=[media],
-            content=req.caption,
-            integration_ids=req.platform_ids,
-            publish_date=req.schedule_time
-        )
-        logging.info(f"Postiz create_post response: {post}")
-        
-        # Postiz 2.0 returns a list of results, one per integration
-        postiz_id = post[0].get('postId') if isinstance(post, list) and len(post) > 0 else post.get('id')
+        # NEW LOGIC: Just save to DB. Scheduler picks it up.
+        logging.info(f"Queueing post for scheduling: Video {req.video_id}")
         
         # Normalize schedule_time to UTC Naive for storage consistency
         if req.schedule_time:
@@ -2602,22 +2505,28 @@ async def upload_and_schedule(
         else:
             storage_dt = datetime.utcnow()
 
-        # 3. Save Record
+        # Save Record with postiz_status="SCHEDULED" (or "PICKUP" if immediate? No, let scheduler decide)
+        # Status "scheduled" is legacy status. "postiz_status" drives the new machine.
+        
         rec = ScheduledPost(
             id=f"post_{uuid.uuid4().hex[:8]}",
             project_id=req.video_id,
-            video_path=str(video_path),  # CRITICAL: Save the actual path
-            postiz_post_id=postiz_id,
-            postiz_media_id=media.get('id'),
+            video_path=str(video_path), # Save path so scheduler can upload
             caption=req.caption,
             platforms=",".join(req.platform_ids),
+            integration_id=req.platform_ids[0] if req.platform_ids else None, # Legacy compatibility
             schedule_time=storage_dt,
-            status='scheduled' if req.schedule_time else 'posted'
+            status='scheduled',
+            postiz_status='SCHEDULED', # Triggers PICKUP loop
+            postiz_post_id=None,
+            postiz_media_id=None,
+            retry_count=0,
+            error_source=None
         )
         db.add(rec)
         db.commit()
         
-        return {"success": True, "data": {"post_id": rec.id}}
+        return {"success": True, "data": {"post_id": rec.id, "message": "Post queued for processing"}}
     except Exception as e:
         logging.error(f"Scheduling failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2654,7 +2563,10 @@ async def get_scheduled_posts_endpoint(db: Session = Depends(get_db)):
             "schedule_time": schedule_time_str,
             "status": p.status,
             "platforms": p.platforms.split(',') if p.platforms else [],
-            "video_id": p.project_id
+            "video_id": p.project_id,
+            "postiz_status": p.postiz_status, # New field
+            "error_source": p.error_source, # New field
+            "last_error_message": p.last_error_message # New field
         })
     return {"success": True, "data": data}
 

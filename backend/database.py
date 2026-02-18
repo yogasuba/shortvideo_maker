@@ -51,12 +51,21 @@ class ScheduledPost(Base):
     
     # Postiz integration fields
     postiz_post_id = Column(String, nullable=True, index=True)
-    postiz_media_id = Column(String, nullable=True)
-    platforms = Column(String, nullable=True)  # Comma-separated platform IDs
+    postiz_execution_id = Column(String, nullable=True) # For tracking specific execution attempts
+    
+    # State Machine Status
+    # Values: SCHEDULED, PICKUP, UPLOAD, CREATE, MONITOR, COMPLETED, FAILED, SKIPPED_LEGACY
+    postiz_status = Column(String, default="SCHEDULED") 
+    
+    # Error Tracking
     retry_count = Column(Integer, default=0)
-    next_retry_at = Column(DateTime(timezone=True), nullable=True)
-    processing_started_at = Column(DateTime(timezone=True), nullable=True)
-    media_url = Column(String, nullable=True)
+    # Values: INTERNAL, NETWORK, POSTIZ, PLATFORM
+    error_source = Column(String, nullable=True) 
+    last_error_message = Column(String, nullable=True)
+    
+    postiz_media_id = Column(String, nullable=True)
+    postiz_media_url = Column(String, nullable=True) # URL/Path returned by Postiz Upload
+    platforms = Column(String, nullable=True)  # Comma-separated platform IDs
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
     

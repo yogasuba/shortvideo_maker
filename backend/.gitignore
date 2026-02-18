@@ -29,17 +29,58 @@ temp_assets/
 *.gif
 *.webp
 
-# Test files and outputs
-test_*.txt
-test_*.mp4
-test_*.mp3
-test_*.png
-test_storage/
-test_log.txt
-debug_output.txt
-debug_log_2.txt
-verification_result.txt
-test_debug.log
+# Local Database (Do not commit production data)
+shortmaker.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+debug_*.txt
+status.txt
+api_results.txt
+upload_response.txt
+
+# Postiz specific cleanup
+postiz_jwt_token.txt
+postiz_official_key.txt
+final_token.txt
+debug_ids.txt
+
+# Test and Debug Scripts (Root)
+test_*.py
+verify_*.py
+check_*.py
+!check_db_status.py
+*final.py
+get_db_key.py
+list_all_posts.py
+remove_test122.py
+manual_trigger.py
+
+# Tools cleanup
+tools/test_*.py
+tools/debug_*.py
+tools/dump_*.py
+tools/rescue_*.py
+tools/check_*.py
+!tools/check_db_status.py
+tools/*final.py
+tools/verify_*.py
+tools/migrate_db.py
+tools/quick_check.py
+tools/clear_postiz_id.py
+
+# Specific One-off Fixes
+tools/publish_via_postiz.py
+tools/find_today_posts.py
+tools/fix_stuck_post.py
+tools/get_stuck_project.py
+tools/handle_stuck_post.py
+tools/read_error.py
+tools/search_logs.py
+tools/set_video_path.py
+tools/delete_stuck_post.py
 
 # IDEs
 .vscode/
@@ -53,7 +94,7 @@ test_debug.log
 Thumbs.db
 desktop.ini
 
-# Node (if any frontend dependencies)
+# Node
 node_modules/
 npm-debug.log
 yarn-error.log
@@ -64,13 +105,9 @@ yarn-error.log
 *.bak
 *.cache
 
-# Database
-*.db
-*.db-journal
-
-# Tools/Debug
-tools/
-today_posts_output.txt
-
-# Generated assets
-fonts/
+# WHITELIST - ESSENTIAL UTILITIES (Keep these!)
+!tools/inspect_db.py
+!tools/manual_trigger.py
+!tools/diagnose_scheduler_v2.py
+!tools/fix_video_path.py
+!tools/sync_and_fix.py

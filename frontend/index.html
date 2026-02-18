@@ -1,0 +1,1734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Faceless Videos Creator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary: #667eea;
+            --secondary: #764ba2;
+            --success: #10b981;
+            --light-bg: #f8fafc;
+            --card-shadow: 0 10px 30px rgba(102, 126, 234, 0.1);
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+        
+        .container-custom {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 1.5rem 0;
+            margin-bottom: 2rem;
+        }
+        
+        .logo {
+            color: var(--primary);
+            font-weight: 700;
+            font-size: 1.8rem;
+        }
+        
+        .card-custom {
+            background: white;
+            border-radius: 15px;
+            border: none;
+            box-shadow: var(--card-shadow);
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+        
+        .card-header-custom {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            padding: 1.5rem;
+            border-bottom: none;
+        }
+        
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin: 2rem 0;
+            position: relative;
+        }
+        
+        .step-indicator:before {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #e2e8f0;
+            z-index: 1;
+        }
+        
+        .step {
+            position: relative;
+            z-index: 2;
+            text-align: center;
+            width: 100px;
+        }
+        
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: white;
+            border: 2px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 10px;
+            font-weight: 600;
+            color: #94a3b8;
+        }
+        
+        .step.active .step-circle {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+        
+        .step-label {
+            font-size: 0.9rem;
+            color: #64748b;
+            font-weight: 500;
+        }
+        
+        .step.active .step-label {
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .form-control-custom {
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 12px 15px;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+        
+        .form-control-custom:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .script-input {
+            min-height: 200px;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+        
+        .character-count {
+            font-size: 0.85rem;
+            color: #64748b;
+            text-align: right;
+            margin-top: 5px;
+        }
+        
+        .character-count.warning {
+            color: #f59e0b;
+        }
+        
+        .character-count.error {
+            color: #ef4444;
+        }
+        
+        .voice-option, .style-option {
+            cursor: pointer;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+            background: white;
+        }
+        
+        .voice-option:hover, .style-option:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+        
+        .voice-option.selected, .style-option.selected {
+            border-color: var(--primary);
+            background: rgba(102, 126, 234, 0.05);
+        }
+        
+        .voice-icon, .style-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            color: var(--primary);
+        }
+        
+        .btn-primary-custom {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border: none;
+            padding: 12px 30px;
+            border-radius: 10px;
+            color: white;
+            font-weight: 600;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+            color: white;
+        }
+        
+        .btn-primary-custom:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .progress-custom {
+            height: 10px;
+            border-radius: 5px;
+            background: #e2e8f0;
+            overflow: hidden;
+        }
+        
+        .progress-bar-custom {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            transition: width 0.3s;
+        }
+        
+        .video-preview {
+            background: #1a1a2e;
+            border-radius: 10px;
+            overflow: hidden;
+            aspect-ratio: 9/16;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        
+        .video-preview video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .alert-custom {
+            border-radius: 10px;
+            border: none;
+            padding: 15px 20px;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .stats-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+        }
+        
+        .stats-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 5px;
+        }
+        
+        .stats-label {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        
+        .preview-modal .modal-content {
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        
+        .scene-preview-card {
+            background: #f8f9fa;
+            border-left: 4px solid var(--primary);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .scene-number {
+            background: var(--primary);
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            margin-right: 10px;
+        }
+        
+        .scene-text {
+            font-size: 0.95rem;
+            color: #374151;
+            line-height: 1.5;
+        }
+        
+        .scene-text-container {
+            margin-left: 10px;
+        }
+        
+        .scene-text-edit {
+            font-size: 0.95rem;
+            border: 2px solid var(--primary);
+            border-radius: 5px;
+            padding: 8px;
+            resize: vertical;
+        }
+        
+        .scene-text-edit:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .example-scripts {
+            background: #f0f4ff;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .example-script {
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            transition: background 0.3s;
+        }
+        
+        .example-script:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+        
+        .example-title {
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 5px;
+        }
+        
+        .example-text {
+            font-size: 0.9rem;
+            color: #64748b;
+        }
+        
+        .orientation-option {
+            cursor: pointer;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+            background: white;
+        }
+
+        .orientation-option:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .orientation-option.selected {
+            border-color: var(--primary);
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .orientation-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            color: var(--primary);
+        }
+
+        .video-preview.landscape {
+            aspect-ratio: 16/9;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="container-custom">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="logo">
+                    <i class="bi bi-camera-reels me-2"></i>
+                    Faceless Videos
+                </div>
+                <div>
+                    <button class="btn btn-outline-primary me-2" onclick="resetForm()">
+                        <i class="bi bi-arrow-clockwise"></i> New
+                    </button>
+                    <button class="btn btn-primary-custom" onclick="toggleTheme()">
+                        <i class="bi bi-moon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container-custom">
+        <!-- Progress Steps -->
+        <div class="step-indicator">
+            <div class="step active" id="step1-indicator">
+                <div class="step-circle">1</div>
+                <div class="step-label">Video Details</div>
+            </div>
+            <div class="step" id="step2-indicator">
+                <div class="step-circle">2</div>
+                <div class="step-label">Write Script</div>
+            </div>
+            <div class="step" id="step3-indicator">
+                <div class="step-circle">3</div>
+                <div class="step-label">Choose Voice</div>
+            </div>
+            <div class="step" id="step4-indicator">
+                <div class="step-circle">4</div>
+                <div class="step-label">Image Style</div>
+            </div>
+            <div class="step" id="step5-indicator">
+                <div class="step-circle">5</div>
+                <div class="step-label">Generate</div>
+            </div>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alertContainer" class="mb-4"></div>
+
+        <!-- Step 1: Video Details -->
+        <div class="card-custom" id="step1">
+            <div class="card-header-custom">
+                <h4 class="mb-0"><i class="bi bi-gear me-2"></i> Video Details</h4>
+            </div>
+            <div class="card-body p-4">
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Video Title *</label>
+                    <input type="text" class="form-control form-control-custom" id="videoTitle" 
+                           placeholder="Enter a title for your video" maxlength="100">
+                    <div class="character-count" id="titleCount">0/100</div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">Output Language</label>
+                        <select class="form-select form-control-custom" id="language">
+                            <option value="en">English</option>
+                            <option value="es">Spanish</option>
+                            <option value="fr">French</option>
+                            <option value="de">German</option>
+                            <option value="it">Italian</option>
+                            <option value="pt">Portuguese</option>
+                            <option value="hi">Hindi</option>
+                            <option value="ta">Tamil</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">Tone</label>
+                        <select class="form-select form-control-custom" id="tone">
+                            <option value="neutral">Neutral</option>
+                            <option value="professional">Professional</option>
+                            <option value="casual">Casual</option>
+                            <option value="humorous">Humorous</option>
+                            <option value="educational">Educational</option>
+                            <option value="motivational">Motivational</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Number of Scenes (4-16)</label>
+                    <div class="d-flex align-items-center">
+                        <span class="me-3" id="sceneCount">8</span>
+                        <input type="range" class="form-range" id="sceneSlider" min="4" max="16" value="8">
+                    </div>
+                    <div class="d-flex justify-content-between mt-1">
+                        <small>4 (Short)</small>
+                        <small>8 (Standard)</small>
+                        <small>16 (Detailed)</small>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Video Orientation</label>
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <div class="orientation-option selected" onclick="selectOrientation('portrait')" id="orientation-portrait">
+                                <div class="orientation-icon">
+                                    <i class="bi bi-phone"></i>
+                                </div>
+                                <h6 class="mb-1">Portrait</h6>
+                                <small class="text-muted">9:16 (1080x1920)</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="orientation-option" onclick="selectOrientation('landscape')" id="orientation-landscape">
+                                <div class="orientation-icon">
+                                    <i class="bi bi-laptop"></i>
+                                </div>
+                                <h6 class="mb-1">Landscape</h6>
+                                <small class="text-muted">16:9 (1920x1080)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-between mt-4">
+                    <button class="btn btn-outline-secondary" disabled>Previous</button>
+                    <button class="btn btn-primary-custom" onclick="nextStep(2)">Next: Write Script</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Write Script -->
+        <div class="card-custom" id="step2" style="display: none;">
+            <div class="card-header-custom">
+                <h4 class="mb-0"><i class="bi bi-pencil me-2"></i> Write Your Script</h4>
+            </div>
+            <div class="card-body p-4">
+                <p class="text-muted mb-4">
+                    Write or paste your entire script below. We'll automatically split it into scenes and create visuals for each part.
+                </p>
+                
+                <!-- Example Scripts -->
+                <div class="example-scripts">
+                    <h6 class="fw-bold mb-3">💡 Try these example scripts:</h6>
+                    <div class="example-script" onclick="loadExample('ai')">
+                        <div class="example-title">🤖 The Future of AI</div>
+                        <div class="example-text">Artificial intelligence is transforming our world. From healthcare to transportation...</div>
+                    </div>
+                    <div class="example-script" onclick="loadExample('meditation')">
+                        <div class="example-title">🧘 Benefits of Meditation</div>
+                        <div class="example-text">Meditation reduces stress and improves focus. Just 10 minutes a day can...</div>
+                    </div>
+                    <div class="example-script" onclick="loadExample('entrepreneur')">
+                        <div class="example-title">🚀 Starting a Business</div>
+                        <div class="example-text">Becoming an entrepreneur begins with an idea. Validate it, create a plan...</div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Your Script *</label>
+                    <textarea class="form-control form-control-custom script-input" 
+                              id="script" 
+                              rows="10" 
+                              placeholder="Write or paste your entire script here...
+
+Example:
+Artificial intelligence is revolutionizing every industry. From healthcare diagnostics to autonomous vehicles, AI is making our lives easier and more efficient. The key benefits include increased productivity, improved accuracy, and cost reduction. As technology advances, we can expect even more innovative applications..." 
+                              maxlength="5000"></textarea>
+                    <div class="character-count" id="scriptCount">0/5000</div>
+                </div>
+                
+                    <button class="btn btn-primary-custom w-100 py-3" onclick="previewScriptSplit()" id="previewBtn">
+                        <i class="bi bi-eye me-2"></i> Preview Split Scene
+                    </button>
+                    <div class="mt-3 text-center">
+                        <button class="btn btn-link text-muted text-decoration-none" onclick="prevStep(1)">Back to Video Details</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Choose Voice -->
+        <div class="card-custom" id="step3" style="display: none;">
+            <div class="card-header-custom">
+                <h4 class="mb-0"><i class="bi bi-mic me-2"></i> Choose a Voice</h4>
+            </div>
+            <div class="card-body p-4">
+                <p class="text-muted mb-4">
+                    Select the perfect voice for your content
+                </p>
+                
+                <div class="row g-3" id="voicesContainer">
+                    <!-- Voice options will be loaded dynamically -->
+                </div>
+                
+                <div class="d-flex justify-content-between mt-4">
+                    <button class="btn btn-outline-secondary" onclick="prevStep(2)">Previous</button>
+                    <button class="btn btn-primary-custom" onclick="nextStep(4)">Next: Image Style</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Image Style -->
+        <div class="card-custom" id="step4" style="display: none;">
+            <div class="card-header-custom">
+                <h4 class="mb-0"><i class="bi bi-palette me-2"></i> Choose an Image Style</h4>
+            </div>
+            <div class="card-body p-4">
+                <p class="text-muted mb-4">
+                    Select the style for your content's images
+                </p>
+                
+                <div class="row g-3" id="stylesContainer">
+                    <!-- Style options will be loaded dynamically -->
+                </div>
+                
+                <div class="d-flex justify-content-between mt-4">
+                    <button class="btn btn-outline-secondary" onclick="prevStep(3)">Previous</button>
+                    <button class="btn btn-primary-custom" onclick="createVideo()" id="createVideoBtn">
+                        <i class="bi bi-play-circle me-2"></i> Create Video
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 5: Progress & Result -->
+        <div class="card-custom" id="step5" style="display: none;">
+            <div class="card-header-custom">
+                <h4 class="mb-0"><i class="bi bi-gear-wide-connected me-2"></i> Creating Your Video</h4>
+            </div>
+            <div class="card-body p-4">
+                <div id="progressSection">
+                    <div class="text-center mb-4">
+                        <div class="loading-spinner mb-3" style="display: inline-block; width: 40px; height: 40px;"></div>
+                        <h4 id="progressStatus">Preparing your video...</h4>
+                        <p class="text-muted" id="progressDetail">We're splitting your script into scenes and generating assets.</p>
+                    </div>
+                    
+                    <div class="progress-custom mb-3">
+                        <div class="progress-bar-custom" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="text-center">
+                        <span id="progressText">0%</span>
+                    </div>
+                    
+                    <!-- Scene Preview -->
+                    <div class="mt-4" id="scenesPreview" style="display: none;">
+                        <h6 class="fw-bold mb-3">Scenes Generated:</h6>
+                        <div id="scenesList"></div>
+                    </div>
+                </div>
+                
+                <div id="resultSection" style="display: none;">
+                    <div class="text-center mb-4">
+                        <div class="mb-3">
+                            <i class="bi bi-check-circle-fill text-success" style="font-size: 4rem;"></i>
+                        </div>
+                        <h4 class="text-success">Video Created Successfully!</h4>
+                        <p class="text-muted">Your video "<span id="resultTitle"></span>" is ready.</p>
+                    </div>
+                    
+                    <div class="video-preview mb-4" id="videoPlayer">
+                        <!-- Video player will be inserted here -->
+                    </div>
+                    
+                    <div class="text-center">
+                        <button class="btn btn-primary-custom me-3" onclick="downloadVideo()" id="downloadBtn">
+                            <i class="bi bi-download me-2"></i> Download Video
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="createAnother()">
+                            <i class="bi bi-plus-circle me-2"></i> Create Another
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal fade preview-modal" id="previewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Scene Split Preview</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="previewContent">
+                        <!-- Preview content will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Configuration
+        const API_BASE = 'http://localhost:8001';
+        let currentStep = 1;
+        let selectedVoice = '';
+        let selectedStyle = '';
+        let currentProjectId = '';
+        let currentVideoUrl = '';
+        let config = null;
+        let scenesPreview = null;
+        let previewModalInstance = null; // Store modal instance globally
+        let selectedOrientation = 'portrait';
+        let selectedResolution = '1080x1920';
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfiguration();
+            initializeForm();
+            updateCharacterCounts();
+        });
+        
+        // Load configuration from API
+        async function loadConfiguration() {
+            try {
+                const response = await fetch(`${API_BASE}/api/config`);
+                const data = await response.json();
+                if (data.success) {
+                    config = data.data;
+                    loadLanguages();
+                    loadVoices();
+                    loadStyles();
+                }
+            } catch (error) {
+                showAlert('Failed to load configuration. Make sure the backend server is running on port 8001.', 'error');
+            }
+        }
+        
+        // Populate languages from config
+        function loadLanguages() {
+            if (!config || !config.languages) return;
+            
+            const dropdown = document.getElementById('language');
+            const currentVal = dropdown.value; // Store current selection
+            
+            dropdown.innerHTML = '';
+            
+            const langNames = {
+                'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+                'it': 'Italian', 'pt': 'Portuguese', 'hi': 'Hindi', 'ar': 'Arabic',
+                'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ta': 'Tamil'
+            };
+            
+            config.languages.forEach(langCode => {
+                const option = document.createElement('option');
+                option.value = langCode;
+                option.textContent = langNames[langCode] || langCode.toUpperCase();
+                dropdown.appendChild(option);
+            });
+            
+            // Restore selection if it still exists
+            if ([...dropdown.options].some(opt => opt.value === currentVal)) {
+                dropdown.value = currentVal;
+            }
+        }
+        
+        // Initialize form
+        function initializeForm() {
+            // Character count updates
+            document.getElementById('videoTitle').addEventListener('input', updateTitleCount);
+            document.getElementById('script').addEventListener('input', updateScriptCount);
+            
+            // Scene slider
+            document.getElementById('sceneSlider').addEventListener('input', function() {
+                const count = parseInt(this.value);
+                document.getElementById('sceneCount').textContent = count;
+            });
+        }
+        
+        // Update character counts
+        function updateCharacterCounts() {
+            updateTitleCount();
+            updateScriptCount();
+        }
+        
+        // Update title character count
+        function updateTitleCount() {
+            const title = document.getElementById('videoTitle').value;
+            const count = title.length;
+            const countElement = document.getElementById('titleCount');
+            countElement.textContent = `${count}/100`;
+            
+            if (count > 90) {
+                countElement.classList.add('warning');
+            } else if (count > 100) {
+                countElement.classList.add('error');
+            } else {
+                countElement.classList.remove('warning', 'error');
+            }
+        }
+        
+        // Update script character count
+        function updateScriptCount() {
+            const script = document.getElementById('script').value;
+            const count = script.length;
+            const countElement = document.getElementById('scriptCount');
+            countElement.textContent = `${count}/5000`;
+            
+            if (count > 4500) {
+                countElement.classList.add('warning');
+            } else if (count > 5000) {
+                countElement.classList.add('error');
+            } else {
+                countElement.classList.remove('warning', 'error');
+            }
+        }
+        
+        // Load voices from configuration
+        function loadVoices() {
+            if (!config) return;
+            
+            const container = document.getElementById('voicesContainer');
+            container.innerHTML = '';
+            
+            config.voices.forEach(voice => {
+                const col = document.createElement('div');
+                col.className = 'col-md-4 col-lg-3';
+                col.innerHTML = `
+                    <div class="voice-option" onclick="selectVoice('${voice.id}')" id="voice-${voice.id}">
+                        <div class="voice-icon">
+                            <i class="bi bi-${voice.gender === 'female' ? 'person-heart' : 'person-arms-up'}"></i>
+                        </div>
+                        <div class="voice-loader" id="loader-${voice.id}" style="display: none;">
+                            <span class="loading-spinner" style="width: 24px; height: 24px; border-width: 2px;"></span>
+                        </div>
+                        <h6 class="mb-1">${voice.name}</h6>
+                        <small class="text-muted">${voice.accent} • ${voice.gender}</small>
+                    </div>
+                `;
+                container.appendChild(col);
+            });
+        }
+        
+        // Load image styles from configuration
+        function loadStyles() {
+            if (!config) return;
+            
+            const container = document.getElementById('stylesContainer');
+            container.innerHTML = '';
+            
+            config.image_styles.forEach(style => {
+                const col = document.createElement('div');
+                col.className = 'col-md-4 col-lg-3';
+                col.innerHTML = `
+                    <div class="style-option" onclick="selectStyle('${style.id}')" id="style-${style.id}">
+                        <div class="style-icon">
+                            <i class="bi bi-${getStyleIcon(style.id)}"></i>
+                        </div>
+                        <h6 class="mb-1">${style.name}</h6>
+                        <small class="text-muted">${style.description}</small>
+                    </div>
+                `;
+                container.appendChild(col);
+            });
+        }
+        
+        // Get icon for style
+        function getStyleIcon(styleId) {
+            const icons = {
+                'default': 'images',
+                'pixar_art': 'stars',
+                'anime': 'flower1',
+                'comic': 'book',
+                'lego': 'grid-3x3-gap',
+                'cinematic': 'camera-reels',
+                'pexels': 'image'
+            };
+            return icons[styleId] || 'images';
+        }
+        
+        // Load example scripts
+        function loadExample(type) {
+            const examples = {
+                'ai': `Artificial intelligence is revolutionizing every industry. From healthcare diagnostics to autonomous vehicles, AI is making our lives easier and more efficient.
+
+The key benefits include increased productivity, improved accuracy, and significant cost reduction. Machine learning algorithms can process vast amounts of data in seconds.
+
+As technology advances, we can expect even more innovative applications. AI will help solve complex problems like climate change and disease prevention.
+
+The future is bright for AI development. With responsible implementation, we can create a better world for everyone.`,
+
+                'meditation': `Meditation offers numerous benefits for both mental and physical health. Just 10 minutes of daily practice can transform your life.
+
+Regular meditation reduces stress and anxiety levels significantly. It helps calm the mind and improve emotional regulation.
+
+Studies show meditation increases focus and concentration. It enhances creativity and problem-solving abilities.
+
+Physical benefits include lower blood pressure and improved sleep quality. Meditation strengthens the immune system and promotes longevity.
+
+Starting is simple: find a quiet space, sit comfortably, and focus on your breath. Consistency is more important than duration.`,
+
+                'entrepreneur': `Starting a business begins with a great idea. But an idea alone isn't enough – execution is everything.
+
+First, validate your concept with market research. Identify your target audience and their pain points.
+
+Create a simple business plan outlining your goals. Focus on creating minimum viable products to test the market.
+
+Building a strong team is crucial for success. Surround yourself with people who complement your skills.
+
+Remember, entrepreneurship is a journey of learning. Embrace failures as opportunities to grow and improve.`
+            };
+            
+            document.getElementById('script').value = examples[type] || '';
+            updateScriptCount();
+            showAlert(`Loaded "${type}" example script`, 'success');
+        }
+        
+        // Navigation functions
+        function nextStep(step) {
+            if (!validateStep(currentStep)) return;
+            
+            document.getElementById(`step${currentStep}`).style.display = 'none';
+            document.getElementById(`step${currentStep}-indicator`).classList.remove('active');
+            
+            currentStep = step;
+            document.getElementById(`step${currentStep}`).style.display = 'block';
+            document.getElementById(`step${currentStep}-indicator`).classList.add('active');
+            
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        function prevStep(step) {
+            document.getElementById(`step${currentStep}`).style.display = 'none';
+            document.getElementById(`step${currentStep}-indicator`).classList.remove('active');
+            
+            currentStep = step;
+            document.getElementById(`step${currentStep}`).style.display = 'block';
+            document.getElementById(`step${currentStep}-indicator`).classList.add('active');
+            
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        // Validate current step
+        function validateStep(step) {
+            if (step === 1) {
+                const title = document.getElementById('videoTitle').value.trim();
+                if (!title) {
+                    showAlert('Please enter a video title', 'error');
+                    return false;
+                }
+                return true;
+                
+            } else if (step === 2) {
+                const script = document.getElementById('script').value.trim();
+                if (!script) {
+                    showAlert('Please enter your script', 'error');
+                    return false;
+                }
+                if (script.length < 50) {
+                    showAlert('Script should be at least 50 characters long', 'error');
+                    return false;
+                }
+                return true;
+                
+            } else if (step === 3) {
+                if (!selectedVoice) {
+                    showAlert('Please select a voice', 'error');
+                    return false;
+                }
+                return true;
+                
+            } else if (step === 4) {
+                if (!selectedStyle) {
+                    showAlert('Please select an image style', 'error');
+                    return false;
+                }
+                return true;
+            }
+            return true;
+        }
+        
+        // Select voice
+        function selectVoice(voiceId) {
+            selectedVoice = voiceId;
+            
+            // Update UI
+            document.querySelectorAll('.voice-option').forEach(option => {
+                option.classList.remove('selected');
+            });
+            document.getElementById(`voice-${voiceId}`).classList.add('selected');
+            
+            // Show loader and hide voice icon
+            const voiceOption = document.getElementById(`voice-${voiceId}`);
+            const voiceIcon = voiceOption.querySelector('.voice-icon');
+            const voiceLoader = document.getElementById(`loader-${voiceId}`);
+            
+            if (voiceIcon) voiceIcon.style.display = 'none';
+            if (voiceLoader) voiceLoader.style.display = 'block';
+            
+            // Preview voice
+            previewVoiceSample(voiceId);
+        }
+        
+        // Select style
+        function selectStyle(styleId) {
+            selectedStyle = styleId;
+            
+            // Update UI
+            document.querySelectorAll('.style-option').forEach(option => {
+                option.classList.remove('selected');
+            });
+            document.getElementById(`style-${styleId}`).classList.add('selected');
+        }
+        
+// Select orientation
+function selectOrientation(orientation) {
+    selectedOrientation = orientation;
+    
+    // Update resolution based on orientation
+    if (orientation === 'portrait') {
+        selectedResolution = '1080x1920';
+    } else {
+        selectedResolution = '1920x1080';
+    }
+    
+    // Update UI
+    document.querySelectorAll('.orientation-option').forEach(option => {
+        option.classList.remove('selected');
+    });
+    document.getElementById(`orientation-${orientation}`).classList.add('selected');
+}
+
+        // Preview voice sample
+// Fix the previewVoiceSample function
+async function previewVoiceSample(voiceId) {
+    const sampleText = "This is a preview of how your video will sound with this voice.";
+    const language = document.getElementById('language').value;
+    
+    // Helper function to hide loader and show icon
+    function hideLoader() {
+        const voiceOption = document.getElementById(`voice-${voiceId}`);
+        const voiceIcon = voiceOption ? voiceOption.querySelector('.voice-icon') : null;
+        const voiceLoader = document.getElementById(`loader-${voiceId}`);
+        
+        if (voiceIcon) voiceIcon.style.display = 'block';
+        if (voiceLoader) voiceLoader.style.display = 'none';
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/audio/preview`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                text: sampleText,
+                language: language,
+                voice: voiceId
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const audio = new Audio(`${API_BASE}${data.data.url}`);
+            
+            // Hide loader when audio can play
+            audio.addEventListener('canplaythrough', function() {
+                hideLoader();
+            });
+            
+            // Also hide loader when audio ends or on error
+            audio.addEventListener('ended', hideLoader);
+            audio.addEventListener('error', hideLoader);
+            
+            audio.play();
+        } else {
+            hideLoader();
+        }
+    } catch (error) {
+        console.error('Voice preview failed:', error);
+        hideLoader();
+    }
+}
+
+        
+        // Preview script split
+// Update this function in your JavaScript
+// Update this function in your JavaScript
+async function previewScriptSplit() {
+    const script = document.getElementById('script').value.trim();
+    const scenesCount = parseInt(document.getElementById('sceneSlider').value);
+    
+    if (!script) {
+        showAlert('Please enter your script first', 'error');
+        return;
+    }
+    
+    const btn = document.getElementById('previewBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="loading-spinner"></span> Analyzing script...';
+    btn.disabled = true;
+    
+    try {
+        // Option 1: Using JSON (recommended)
+        const response = await fetch(`${API_BASE}/api/scripts/preview`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                script: script,
+                scenes_count: scenesCount,
+                language: document.getElementById('language').value
+            })
+        });
+        
+        // Option 2: Using FormData (if you prefer)
+        /*
+        const formData = new FormData();
+        formData.append('script', script);
+        formData.append('scenes_count', scenesCount);
+        
+        const response = await fetch(`${API_BASE}/api/scripts/preview/form`, {
+            method: 'POST',
+            body: formData
+        });
+        */
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            scenesPreview = data.data;
+            showScriptPreview(data.data);
+        } else {
+            throw new Error('Failed to preview script');
+        }
+    } catch (error) {
+        console.error('Preview error:', error);
+        showAlert(`Error: ${error.message}`, 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}        
+
+// Proceed to voice selection from preview
+function proceedToVoiceSelection() {
+    // hide modal
+    if (previewModalInstance) {
+        previewModalInstance.hide();
+    }
+    // go to next step
+    nextStep(3);
+}
+
+// Show script preview modal
+function showScriptPreview(data, skipShow = false) {
+            const modalElement = document.getElementById('previewModal');
+            const content = document.getElementById('previewContent');
+            
+            let html = `
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <p class="text-muted mb-0">Your script will be split into <strong>${data.total_scenes} scenes</strong>.</p>
+                    </div>
+                    <button class="btn btn-primary-custom" onclick="proceedToVoiceSelection()">
+                        Choose Voice <i class="bi bi-arrow-right ms-2"></i>
+                    </button>
+                </div>
+                <div class="alert alert-info mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Each scene will become a separate visual with its own audio narration.
+                </div>
+                <h6 class="fw-bold mb-3">Scene Breakdown:</h6>
+            `;
+            
+            data.scenes.forEach((scene, index) => {
+                html += `
+                    <div class="scene-preview-card" id="scene-card-${index}">
+                        <div class="d-flex align-items-start justify-content-between">
+                            <div class="d-flex align-items-start flex-grow-1">
+                                <div class="scene-number">${scene.scene_number}</div>
+                                <div class="scene-text-container flex-grow-1">
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted small fw-bold mb-1">VISUAL PROMPT (SCENE DESCRIPTION)</label>
+                                        <div class="scene-text p-2 bg-light rounded" id="scene-text-${index}">${scene.text}</div>
+                                        <textarea class="form-control scene-text-edit d-none" id="scene-edit-${index}" rows="3">${scene.text}</textarea>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted small fw-bold mb-1">VOICE OVER (NARRATION)</label>
+                                        <div class="scene-text p-2 bg-light rounded border-start border-3 border-info" id="scene-voice-${index}">
+                                            ${scene.voice_over || scene.text}
+                                        </div>
+                                        <textarea class="form-control scene-text-edit d-none" id="scene-voice-edit-${index}" rows="3">${scene.voice_over || scene.text}</textarea>
+                                    </div>
+                                    
+                                    <!-- Image Upload Section -->
+                                    <div class="mt-3 pt-3 border-top">
+                                        <div id="scene-image-preview-${index}" class="mb-2 ${scene.custom_image_url ? '' : 'd-none'}">
+                                            <div class="position-relative d-inline-block">
+                                                <img src="${scene.custom_image_url ? API_BASE + scene.custom_image_url : ''}" 
+                                                     class="rounded shadow-sm" style="max-height: 120px; max-width: 100%; object-fit: cover;">
+                                                <button class="btn btn-sm btn-danger position-absolute top-0 end-0 m-1" 
+                                                        onclick="removeSceneImage(${index})" style="padding: 0 5px;">
+                                                    <i class="bi bi-x"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex align-items-center">
+                                            <div class="flex-grow-1">
+                                                <input type="file" class="form-control form-control-sm" id="scene-file-${index}" 
+                                                       accept="image/*" onchange="uploadSceneImage(${index})" style="display: none;">
+                                                <button class="btn btn-sm btn-outline-secondary w-100" 
+                                                        onclick="document.getElementById('scene-file-${index}').click()" id="upload-btn-${index}">
+                                                    <i class="bi bi-image me-1"></i> ${scene.custom_image_url ? 'Change Image' : 'Upload Custom Image'}
+                                                </button>
+                                            </div>
+                                            <div class="ms-2">
+                                                <small class="text-muted" style="font-size: 0.75rem;">
+                                                    ${scene.custom_image_url ? 'Custom image loaded' : 'Will use Pexels/AI if no image uploaded'}
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="btn-group ms-2" role="group">
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="editScene(${index})" id="edit-btn-${index}" title="Edit scene">
+                                    <i class="bi bi-pencil-fill"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteScene(${index})" title="Delete scene">
+                                    <i class="bi bi-trash-fill"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <small class="text-muted mt-2 d-block" id="scene-preview-${index}">
+                            <i class="bi bi-clock me-1"></i> ${scene.duration}s • 
+                            <i class="bi bi-image me-1 ms-2"></i> Scene ${scene.scene_number}: ${scene.text.substring(0, 60)}...
+                        </small>
+                    </div>
+                `;
+            });
+            
+            content.innerHTML = html;
+            
+            // Add a footer with the proceed button as well for convenience
+            const modalDialog = modalElement.querySelector('.modal-content');
+            let footer = modalDialog.querySelector('.modal-footer');
+            if (!footer) {
+                footer = document.createElement('div');
+                footer.className = 'modal-footer border-top-0';
+                modalDialog.appendChild(footer);
+            }
+            
+            footer.innerHTML = `
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary-custom" onclick="proceedToVoiceSelection()">
+                    Choose Voice <i class="bi bi-arrow-right ms-2"></i>
+                </button>
+            `;
+            
+            // Only show modal if not skipping (i.e., first time or explicit show)
+            if (!skipShow) {
+                // Clean up any existing backdrops first
+                cleanupModalBackdrops();
+                
+                // Create or get modal instance
+                if (!previewModalInstance) {
+                    previewModalInstance = new bootstrap.Modal(modalElement);
+                }
+                previewModalInstance.show();
+            }
+        }
+        
+        // Edit scene function
+        function editScene(index) {
+            const textDiv = document.getElementById(`scene-text-${index}`);
+            const editTextarea = document.getElementById(`scene-edit-${index}`);
+            
+            const voiceDiv = document.getElementById(`scene-voice-${index}`);
+            const voiceTextarea = document.getElementById(`scene-voice-edit-${index}`);
+            
+            const editBtn = document.getElementById(`edit-btn-${index}`);
+            
+            if (editTextarea.classList.contains('d-none')) {
+                // Switch to edit mode
+                textDiv.classList.add('d-none');
+                editTextarea.classList.remove('d-none');
+                
+                voiceDiv.classList.add('d-none');
+                voiceTextarea.classList.remove('d-none');
+                
+                editTextarea.focus();
+                editBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                editBtn.classList.remove('btn-outline-primary');
+                editBtn.classList.add('btn-success');
+                editBtn.title = 'Save changes';
+            } else {
+                // Save changes
+                const newText = editTextarea.value.trim();
+                const newVoice = voiceTextarea.value.trim();
+                
+                if (newText) {
+                    textDiv.textContent = newText;
+                    voiceDiv.textContent = newVoice || newText;
+                    
+                    // Update the scenesPreview data
+                    if (scenesPreview && scenesPreview.scenes[index]) {
+                        scenesPreview.scenes[index].text = newText;
+                        scenesPreview.scenes[index].visual_prompt = newText;
+                        scenesPreview.scenes[index].voice_over = newVoice || newText;
+                        
+                        // Update the preview text below the scene
+                        const previewElement = document.getElementById(`scene-preview-${index}`);
+                        if (previewElement) {
+                            previewElement.innerHTML = `
+                                <i class="bi bi-clock me-1"></i> ${scenesPreview.scenes[index].duration}s • 
+                                <i class="bi bi-image me-1 ms-2"></i> Scene ${scenesPreview.scenes[index].scene_number}: ${newText.substring(0, 40)}...
+                                <br><i class="bi bi-mic me-1 ms-2"></i> VO: ${newVoice.substring(0, 40)}...
+                            `;
+                        }
+                        
+                        // Update the script textarea with edited content
+                        updateScriptFromScenes();
+                    }
+                }
+                textDiv.classList.remove('d-none');
+                editTextarea.classList.add('d-none');
+                
+                voiceDiv.classList.remove('d-none');
+                voiceTextarea.classList.add('d-none');
+                
+                editBtn.innerHTML = '<i class="bi bi-pencil-fill"></i>';
+                editBtn.classList.remove('btn-success');
+                editBtn.classList.add('btn-outline-primary');
+                editBtn.title = 'Edit scene';
+            }
+        }
+        
+        // Delete scene function
+        function deleteScene(index) {
+            if (!confirm('Are you sure you want to delete this scene?')) {
+                return;
+            }
+            
+            // Remove from scenesPreview data
+            if (scenesPreview && scenesPreview.scenes) {
+                scenesPreview.scenes.splice(index, 1);
+                scenesPreview.total_scenes = scenesPreview.scenes.length;
+                
+                // Renumber remaining scenes
+                scenesPreview.scenes.forEach((scene, i) => {
+                    scene.scene_number = i + 1;
+                });
+                
+                // Update the script textarea with remaining scenes
+                updateScriptFromScenes();
+                
+                // Refresh the preview display WITHOUT showing modal again (skipShow = true)
+                showScriptPreview(scenesPreview, true);
+            }
+        }
+        
+        // Clean up any stuck modal backdrops
+        function cleanupModalBackdrops() {
+            // Remove all modal backdrops
+            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                backdrop.remove();
+            });
+            // Remove modal-open class from body
+            document.body.classList.remove('modal-open');
+            // Reset body styles
+            document.body.style.overflow = '';
+            document.body.style.paddingRight = '';
+        }
+        
+        // Upload scene image
+        async function uploadSceneImage(index) {
+            const fileInput = document.getElementById(`scene-file-${index}`);
+            const file = fileInput.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const btn = document.getElementById(`upload-btn-${index}`);
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></span> Uploading...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/upload/scene-image`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update scenesPreview data
+                    scenesPreview.scenes[index].custom_image_url = data.data.url;
+                    scenesPreview.scenes[index].custom_image_path = data.data.path;
+                    
+                    // Update UI
+                    const previewDiv = document.getElementById(`scene-image-preview-${index}`);
+                    const previewImg = previewDiv.querySelector('img');
+                    previewImg.src = API_BASE + data.data.url;
+                    previewDiv.classList.remove('d-none');
+                    btn.innerHTML = '<i class="bi bi-image me-1"></i> Change Image';
+                    
+                    // Update the scene indicator text
+                    const statusText = btn.parentElement.nextElementSibling.querySelector('small');
+                    statusText.textContent = 'Custom image loaded';
+                    
+                    showAlert(`Image uploaded for scene ${index + 1}`, 'success');
+                } else {
+                    throw new Error('Upload failed');
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                showAlert('Failed to upload image', 'error');
+                btn.innerHTML = originalText;
+            } finally {
+                btn.disabled = false;
+                // Important: clear the input so the same file can be uploaded again if needed
+                fileInput.value = '';
+            }
+        }
+        
+        // Remove scene image
+        function removeSceneImage(index) {
+            if (scenesPreview && scenesPreview.scenes[index]) {
+                delete scenesPreview.scenes[index].custom_image_url;
+                delete scenesPreview.scenes[index].custom_image_path;
+                
+                // Update UI
+                const previewDiv = document.getElementById(`scene-image-preview-${index}`);
+                previewDiv.classList.add('d-none');
+                
+                const btn = document.getElementById(`upload-btn-${index}`);
+                btn.innerHTML = '<i class="bi bi-image me-1"></i> Upload Custom Image';
+                
+                const statusText = btn.parentElement.nextElementSibling.querySelector('small');
+                statusText.textContent = 'Will use Pexels/AI if no image uploaded';
+            }
+        }
+        
+        // Update script textarea from edited scenes
+        function updateScriptFromScenes() {
+            if (scenesPreview && scenesPreview.scenes && scenesPreview.scenes.length > 0) {
+                // Combine all scene texts with double line breaks
+                const updatedScript = scenesPreview.scenes.map(scene => scene.text).join('\n\n');
+                document.getElementById('script').value = updatedScript;
+                updateScriptCount();
+            }
+        }
+        
+        // Create video
+        async function createVideo() {
+            if (!validateStep(4)) return;
+            
+            // Collect data
+            const title = document.getElementById('videoTitle').value.trim();
+            const script = document.getElementById('script').value.trim();
+            const language = document.getElementById('language').value;
+            const tone = document.getElementById('tone').value;
+            const scenesCount = parseInt(document.getElementById('sceneSlider').value);
+            
+            const requestData = {
+                title: title,
+                script: script,
+                language: language,
+                tone: tone,
+                voice: selectedVoice,
+                image_style: selectedStyle,
+                resolution: selectedResolution,
+                scenes_count: scenesCount,
+                scenes: scenesPreview ? scenesPreview.scenes : null
+            };
+            
+            // Show progress step
+            nextStep(5);
+            
+            // Disable create button
+            document.getElementById('createVideoBtn').disabled = true;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/videos/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentProjectId = data.data.project_id;
+                    startProgressPolling();
+                } else {
+                    throw new Error('Failed to start video creation');
+                }
+            } catch (error) {
+                showAlert(`Error: ${error.message}`, 'error');
+                prevStep(4);
+                document.getElementById('createVideoBtn').disabled = false;
+            }
+        }
+        
+        // Start polling for progress
+        function startProgressPolling() {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/api/projects/${currentProjectId}/status`);
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        const project = data.data;
+                        updateProgress(project);
+                        
+                        if (project.status === 'completed') {
+                            clearInterval(interval);
+                            showResult(project);
+                        } else if (project.status === 'failed') {
+                            clearInterval(interval);
+                            showAlert(`Video creation failed: ${project.error}`, 'error');
+                            prevStep(4);
+                            document.getElementById('createVideoBtn').disabled = false;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 2000);
+        }
+        
+        // Update progress display
+        function updateProgress(project) {
+            const progress = project.progress || 0;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const progressStatus = document.getElementById('progressStatus');
+            const progressDetail = document.getElementById('progressDetail');
+            
+            progressBar.style.width = `${progress}%`;
+            progressText.textContent = `${progress}%`;
+            
+            // Update status messages based on progress
+            if (progress < 25) {
+                progressStatus.textContent = 'Processing your script...';
+                progressDetail.textContent = 'Splitting into scenes and analyzing content';
+            } else if (progress < 50) {
+                progressStatus.textContent = 'Generating audio narration...';
+                progressDetail.textContent = 'Creating voiceovers for each scene';
+            } else if (progress < 75) {
+                progressStatus.textContent = 'Creating visuals...';
+                progressDetail.textContent = 'Generating images for each scene in selected style';
+            } else {
+                progressStatus.textContent = 'Stitching video together...';
+                progressDetail.textContent = 'Combining all scenes into final video';
+            }
+        }
+        
+        // Show result when video is ready
+        function showResult(project) {
+            currentVideoUrl = project.video_url;
+            
+            // Hide progress, show result
+            document.getElementById('progressSection').style.display = 'none';
+            document.getElementById('resultSection').style.display = 'block';
+            
+            // Update title
+            document.getElementById('resultTitle').textContent = project.title;
+            
+            // Update preview container based on orientation
+            const videoPlayer = document.getElementById('videoPlayer');
+            if (selectedOrientation === 'landscape') {
+                videoPlayer.classList.add('landscape');
+            } else {
+                videoPlayer.classList.remove('landscape');
+            }
+            
+            // Add video player
+            if (currentVideoUrl) {
+                videoPlayer.innerHTML = `
+                    <video id="finalVideo" controls autoplay class="w-100 h-100">
+                        <source src="${API_BASE}${currentVideoUrl}" type="video/mp4">
+                        Your browser does not support video playback.
+                    </video>
+                `;
+                
+                // Verify actual video resolution for educational purposes
+                const videoEl = document.getElementById('finalVideo');
+                videoEl.onloadedmetadata = function() {
+                    const videoWidth = this.videoWidth;
+                    const videoHeight = this.videoHeight;
+                    
+                    console.log("%c--- VIDEO RESOLUTION VERIFICATION ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
+                    console.log(`Actual Dimensions: ${videoWidth}px x ${videoHeight}px`);
+                    
+                    if (videoWidth > videoHeight) {
+                        console.log("%cOrientation: Landscape (16:9)", "color: #3498db; font-weight: bold;");
+                    } else {
+                        console.log("%cOrientation: Portrait (9:16)", "color: #e67e22; font-weight: bold;");
+                    }
+                    console.log("---------------------------------------");
+                };
+            }
+        }
+        
+        // Download video
+        async function downloadVideo() {
+            if (!currentVideoUrl) return;
+            
+            const downloadBtn = document.getElementById('downloadBtn');
+            const originalText = downloadBtn.innerHTML;
+            
+            try {
+                // Show loading state
+                downloadBtn.innerHTML = '<span class="loading-spinner"></span> Downloading...';
+                downloadBtn.disabled = true;
+                
+                // Fetch the video as a blob
+                const response = await fetch(`${API_BASE}${currentVideoUrl}`);
+                if (!response.ok) throw new Error('Download failed');
+                
+                const blob = await response.blob();
+                
+                // Create a temporary URL for the blob
+                const blobUrl = window.URL.createObjectURL(blob);
+                
+                // Create a temporary anchor element
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                
+                // Extract filename from URL or use default with timestamp
+                const filename = currentVideoUrl.split('/').pop() || `video_${Date.now()}.mp4`;
+                link.download = filename;
+                
+                // Trigger download
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Clean up the blob URL
+                window.URL.revokeObjectURL(blobUrl);
+                
+                showAlert('Video downloaded successfully!', 'success');
+            } catch (error) {
+                console.error('Download error:', error);
+                showAlert('Failed to download video. Please try again.', 'error');
+            } finally {
+                // Restore button state
+                downloadBtn.innerHTML = originalText;
+                downloadBtn.disabled = false;
+            }
+        }
+        
+        // Create another video
+        function createAnother() {
+            resetForm();
+            showAlert('Ready to create another video!', 'success');
+        }
+        
+        // Reset form
+        function resetForm() {
+            // Reset form values
+            document.getElementById('videoTitle').value = '';
+            document.getElementById('script').value = '';
+            document.getElementById('language').value = 'en';
+            document.getElementById('tone').value = 'neutral';
+            document.getElementById('sceneSlider').value = 8;
+            
+            // Reset selections
+            selectedVoice = '';
+            selectedStyle = '';
+            selectedOrientation = 'portrait';
+            selectedResolution = '1080x1920';
+            currentProjectId = '';
+            currentVideoUrl = '';
+            scenesPreview = null;
+            
+            // Update UI
+            updateCharacterCounts();
+            document.getElementById('sceneCount').textContent = '8';
+            document.querySelectorAll('.voice-option.selected').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('.style-option.selected').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('.orientation-option').forEach(el => el.classList.remove('selected'));
+            document.getElementById('orientation-portrait').classList.add('selected');
+            
+            // Reset progress/result display
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').textContent = '0%';
+            document.getElementById('videoPlayer').innerHTML = '';
+            
+            // Go to step 1
+            document.querySelectorAll('.step').forEach((step, index) => {
+                step.classList.remove('active');
+                if (index === 0) step.classList.add('active');
+            });
+            
+            document.querySelectorAll('[id^="step"]').forEach((el, index) => {
+                if (index === 0) {
+                    el.style.display = 'block';
+                } else if (el.id.startsWith('step')) {
+                    el.style.display = 'none';
+                }
+            });
+            
+            currentStep = 1;
+            document.getElementById('createVideoBtn').disabled = false;
+        }
+        
+        // Show alert
+        function showAlert(message, type = 'info') {
+            const container = document.getElementById('alertContainer');
+            const alertId = 'alert-' + Date.now();
+            
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-custom alert-dismissible fade show`;
+            alertDiv.id = alertId;
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" onclick="document.getElementById('${alertId}').remove()"></button>
+            `;
+            
+            container.appendChild(alertDiv);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (document.getElementById(alertId)) {
+                    document.getElementById(alertId).remove();
+                }
+            }, 5000);
+        }
+        
+        // Toggle theme
+        function toggleTheme() {
+            document.body.classList.toggle('dark-theme');
+            const btn = document.querySelector('[onclick="toggleTheme()"]');
+            const icon = btn.querySelector('i');
+            if (document.body.classList.contains('dark-theme')) {
+                icon.className = 'bi bi-sun';
+                document.body.style.background = '#1a1a2e';
+            } else {
+                icon.className = 'bi bi-moon';
+                document.body.style.background = 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)';
+            }
+        }
+    </script>
+</body>
+</html>

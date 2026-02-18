@@ -35,6 +35,24 @@ const IntegrationsView: React.FC<IntegrationsViewProps> = ({ API_BASE, addAlert 
     fetchIntegrations();
   }, []);
 
+  const handleDeleteIntegration = async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/postiz/integrations/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        addAlert('Account disconnected successfully', 'success');
+        fetchIntegrations();
+      } else {
+        addAlert(data.detail || 'Failed to disconnect account', 'error');
+      }
+    } catch (error) {
+      addAlert('Network error while disconnecting account', 'error');
+    }
+  };
+
   return (
     <div className="animate-fade-in pb-12">
       <div className="flex justify-between items-center mb-8">
@@ -73,6 +91,7 @@ const IntegrationsView: React.FC<IntegrationsViewProps> = ({ API_BASE, addAlert 
             onChange={() => {}} // Read-only in management view
             isLoading={isLoading}
             onConnect={() => setShowConnectModal(true)}
+            onDelete={handleDeleteIntegration}
             API_BASE={API_BASE}
           />
           

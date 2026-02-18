@@ -185,8 +185,15 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
                   <Clock size={12} className="mr-1" /> 
                   {new Date(selectedPost.schedule_time).toLocaleString()}
                 </p>
-                <div className={`mt-2 w-fit px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider status-badge-${selectedPost.status}`}>
-                  {selectedPost.status}
+                <div className="flex gap-2 mt-2">
+                   <div className={`w-fit px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider status-badge-${selectedPost.status}`}>
+                    {selectedPost.status}
+                  </div>
+                  {selectedPost.postiz_status && selectedPost.postiz_status !== 'SCHEDULED' && selectedPost.postiz_status !== 'COMPLETED' && (
+                     <div className="w-fit px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                        {selectedPost.postiz_status}
+                     </div>
+                  )}
                 </div>
               </div>
 
@@ -196,12 +203,19 @@ const CalendarView: React.FC<CalendarViewProps> = ({ API_BASE, setView }) => {
                 </p>
               </div>
 
-              {selectedPost.status === 'failed' && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-red-600 text-xs flex items-start mb-6 border border-red-100 dark:border-red-800">
-                  <AlertCircle size={14} className="mr-2 mt-0.5 shrink-0" />
-                  <div>
-                    <span className="font-bold">Error:</span> {selectedPost.error_message}
+              {(selectedPost.status === 'failed' || selectedPost.last_error_message) && (
+                <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-red-600 text-xs flex flex-col gap-1 mb-6 border border-red-100 dark:border-red-800">
+                  <div className="flex items-start">
+                      <AlertCircle size={14} className="mr-2 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="font-bold">Error:</span> {selectedPost.error_message || selectedPost.last_error_message || "Unknown Error"}
+                      </div>
                   </div>
+                  {selectedPost.error_source && (
+                      <div className="ml-6 text-[10px] opacity-75">
+                          Source: {selectedPost.error_source}
+                      </div>
+                  )}
                 </div>
               )}
 

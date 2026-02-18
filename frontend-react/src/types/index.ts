@@ -63,6 +63,10 @@ export interface ScheduledPost {
   status: 'pending' | 'scheduled' | 'posted' | 'failed' | 'retrying';
   postiz_post_id?: string;
   error_message?: string;
+  // New Backend Fields
+  postiz_status?: string;
+  error_source?: string;
+  last_error_message?: string;
   // Legacy fields (optional)
   integration_id?: string;
   integration_name?: string;

@@ -1,5 +1,4 @@
-import React from 'react';
-import { Check, Plus, Loader2 } from 'lucide-react';
+import { Check, Plus, Loader2, Trash2 } from 'lucide-react';
 import { PostizIntegration } from '../types';
 
 interface PlatformSelectorProps {
@@ -8,11 +7,12 @@ interface PlatformSelectorProps {
   onChange: (selected: string[]) => void;
   isLoading?: boolean;
   onConnect?: () => void;
+  onDelete?: (id: string) => void;
   API_BASE: string;
 }
 
 const PlatformSelector: React.FC<PlatformSelectorProps> = ({ 
-  platforms, selected, onChange, onConnect, isLoading = false, API_BASE 
+  platforms, selected, onChange, onConnect, onDelete, isLoading = false, API_BASE 
 }) => {
   
   const togglePlatform = (id: string) => {
@@ -110,10 +110,25 @@ const PlatformSelector: React.FC<PlatformSelectorProps> = ({
                 </p>
               </div>
               
-              {isSelected && (
+              {isSelected && !onDelete && (
                 <div className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm">
                   <Check className="w-3 h-3" />
                 </div>
+              )}
+
+              {onDelete && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Are you sure you want to disconnect ${platform.name}?`)) {
+                      onDelete(platform.id);
+                    }
+                  }}
+                  className="absolute top-2 right-2 p-1.5 bg-white/80 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-lg transition-colors border border-gray-100 opacity-0 group-hover:opacity-100 shadow-sm"
+                  title="Disconnect account"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
           );
