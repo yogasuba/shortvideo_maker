@@ -1,13 +1,60 @@
 import React, { useState } from 'react';
-import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, Plus, Loader2, RotateCw, Type, AlignCenter, Eye, EyeOff, Settings2, Palette, Square, Bold, Mic } from 'lucide-react';
+import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, Plus, Loader2, RotateCw, Type, AlignCenter, Eye, EyeOff, Settings2, Palette, Square, Bold, Mic, Pin } from 'lucide-react';
 
-const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BASE, addAlert }) => {
+const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BASE, addAlert, language, selectedVoice }) => {
   const [editingIndex, setEditingIndex] = useState(null);
   const [editVisualText, setEditVisualText] = useState('');
   const [editVoiceText, setEditVoiceText] = useState('');
   const [uploadingIndex, setUploadingIndex] = useState(null);
   const [uploadingAudioIndex, setUploadingAudioIndex] = useState(null);
+  const [isGeneratingVoice, setIsGeneratingVoice] = useState(null);
   const [activeLineIndices, setActiveLineIndices] = useState({});
+
+  // Load persistent audio defaults on mount
+  React.useEffect(() => {
+    const introDefault = localStorage.getItem('app_default_intro_audio');
+    const outroDefault = localStorage.getItem('app_default_outro_audio');
+    
+    if (introDefault || outroDefault) {
+      const newScenes = [...data.scenes];
+      let changed = false;
+      
+      if (introDefault && newScenes[0] && !newScenes[0].custom_audio_url) {
+        try {
+          const audioData = JSON.parse(introDefault);
+          newScenes[0] = {
+            ...newScenes[0],
+            custom_audio_url: audioData.url,
+            custom_audio_path: audioData.path,
+            duration: audioData.duration,
+            duration_is_auto: false,
+            is_default: true
+          };
+          changed = true;
+        } catch (e) { console.error('Error parsing intro default', e); }
+      }
+      
+      const lastIdx = newScenes.length - 1;
+      if (outroDefault && lastIdx > 0 && !newScenes[lastIdx].custom_audio_url) {
+        try {
+          const audioData = JSON.parse(outroDefault);
+          newScenes[lastIdx] = {
+            ...newScenes[lastIdx],
+            custom_audio_url: audioData.url,
+            custom_audio_path: audioData.path,
+            duration: audioData.duration,
+            duration_is_auto: false,
+            is_default: true
+          };
+          changed = true;
+        } catch (e) { console.error('Error parsing outro default', e); }
+      }
+      
+      if (changed) {
+        setScenesPreview({ ...data, scenes: newScenes });
+      }
+    }
+  }, []); // Only on mount
 
   const startEdit = (index, scene) => {
     setEditingIndex(index);
@@ -42,6 +89,8 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
       newDuration = Math.max(3, Math.min(Math.ceil(wordCount / 2.5), 12));
     }
 
+    const isTextChanged = currentScene.voice_over !== editVoiceText || currentScene.text !== editVisualText;
+
     newScenes[index] = {
       ...currentScene,
       text: editVisualText,
@@ -50,6 +99,20 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
       duration: newDuration,
       duration_is_auto: currentScene.duration_is_auto !== false
     };
+
+    // If text changed, the old audio (including system defaults) is no longer valid
+    if (isTextChanged) {
+      delete newScenes[index].custom_audio_url;
+      delete newScenes[index].custom_audio_path;
+      delete newScenes[index].is_default;
+      delete newScenes[index].is_system_default;
+      
+      // Reset duration to auto if audio was cleared
+      newScenes[index].duration_is_auto = true;
+      const textToAnalyze = editVoiceText || editVisualText;
+      const wordCount = textToAnalyze.trim().split(/\s+/).length;
+      newScenes[index].duration = Math.max(3, Math.min(Math.ceil(wordCount / 2.5), 12));
+    }
     
     setScenesPreview({ ...data, scenes: newScenes });
     setEditingIndex(null);
@@ -135,8 +198,96 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
     } catch (error) {
       console.error('Audio upload error:', error);
       addAlert('Failed to upload audio', 'error');
+     } finally {
+       setUploadingAudioIndex(null);
+     }
+   };
+ 
+  const pinAsDefault = async (index) => {
+    const scene = data.scenes[index];
+    if (!scene.custom_audio_url || !scene.custom_audio_path) {
+      addAlert("Generate or upload audio first before pinning", "warning");
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/audio/set-default`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: scene.custom_audio_path,
+          type: index === 0 ? 'intro' : 'outro',
+          text: scene.voice_over || scene.text // Send text for validation
+        })
+      });
+      
+      const resData = await response.json();
+      if (resData.success) {
+        // Save to local storage too for immediate local consistency
+        const key = index === 0 ? 'app_default_intro_audio' : 'app_default_outro_audio';
+        localStorage.setItem(key, JSON.stringify({
+          url: scene.custom_audio_url,
+          path: scene.custom_audio_path,
+          duration: scene.duration
+        }));
+        
+        const newScenes = [...data.scenes];
+        newScenes[index] = { ...newScenes[index], is_default: true, is_system_default: true };
+        setScenesPreview({ ...data, scenes: newScenes });
+        
+        addAlert(`${index === 0 ? 'Intro' : 'Outro'} saved as SYSTEM DEFAULT!`, 'success');
+      } else {
+        throw new Error(resData.detail || 'Failed to save system default');
+      }
+    } catch (error) {
+      console.error('Pin error:', error);
+      addAlert(`Error: ${error.message}`, 'error');
+    }
+  };
+
+  const generateAIVoice = async (index) => {
+    const scene = data.scenes[index];
+    const text = scene.voice_over || scene.text;
+    
+    if (!text) {
+      addAlert("Scene has no text to narrate", "warning");
+      return;
+    }
+    
+    setIsGeneratingVoice(index);
+    try {
+      const response = await fetch(`${API_BASE}/api/audio/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          language: language || 'en',
+          voice: selectedVoice
+        })
+      });
+      
+      const resData = await response.json();
+      if (resData.success) {
+        const newScenes = [...data.scenes];
+        newScenes[index] = {
+          ...newScenes[index],
+          custom_audio_url: resData.data.url,
+          // We don't have the path from preview usually, but the backend generate_audio returns it
+          // Let's check what generate_audio returns. It's usually {url, path, cached}
+          custom_audio_path: resData.data.path, 
+          duration: resData.data.duration || scene.duration,
+          duration_is_auto: false
+        };
+        setScenesPreview({ ...data, scenes: newScenes });
+        addAlert(`AI Voice generated for ${index === 0 ? 'Intro' : 'Outro'}`, 'success');
+      } else {
+        throw new Error(resData.detail || 'Failed to generate voice');
+      }
+    } catch (error) {
+      console.error('Audio generation error:', error);
+      addAlert(`Generation failed: ${error.message}`, 'error');
     } finally {
-      setUploadingAudioIndex(null);
+      setIsGeneratingVoice(null);
     }
   };
 
@@ -145,6 +296,8 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
     const scene = { ...newScenes[index] };
     delete scene.custom_audio_url;
     delete scene.custom_audio_path;
+    delete scene.is_default;
+    delete scene.is_system_default;
     
     // Recalculate duration
     const textToAnalyze = scene.voice_over || scene.text;
@@ -502,29 +655,46 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                         </div>
                       </div>
 
-                      {(index === 0 || index === data.scenes.length - 1) && (
+                       {(index === 0 || index === data.scenes.length - 1) && (
                         <div className="mt-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100/50">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-[0.75rem] font-bold text-blue-700 flex items-center gap-1.5">
-                              <Mic className="w-3.5 h-3.5" /> 
-                              {index === 0 ? 'INTRO VOICE' : 'OUTRO VOICE'} (Custom)
-                            </span>
-                            {scene.custom_audio_url && (
-                              <button 
-                                onClick={() => removeSceneAudio(index)}
-                                className="text-red-500 hover:text-red-700 transition-colors"
-                                title="Remove Audio"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
+                             <span className="text-[0.75rem] font-bold text-blue-700 flex items-center gap-1.5">
+                               <Mic className="w-3.5 h-3.5" /> 
+                               {index === 0 ? 'INTRO VOICE' : 'OUTRO VOICE'} (Custom)
+                             </span>
+                            <div className="flex items-center gap-2">
+                              {scene.is_system_default && (
+                                <span className="text-[0.6rem] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                  <Check className="w-2.5 h-2.5" /> SYSTEM DEFAULT
+                                </span>
+                              )}
+                              {scene.custom_audio_url && (
+                                <button 
+                                  onClick={() => pinAsDefault(index)}
+                                  className={`p-1 rounded transition-colors ${scene.is_default || scene.is_system_default ? 'text-primary bg-primary/10' : 'text-gray-400 hover:text-primary'}`}
+                                  title="Save as system default for all future videos"
+                                >
+                                  <Pin className={`w-3.5 h-3.5 ${scene.is_default || scene.is_system_default ? 'fill-current' : ''}`} />
+                                </button>
+                              )}
+                              {scene.custom_audio_url && (
+                                <button 
+                                  onClick={() => removeSceneAudio(index)}
+                                  className="text-red-500 hover:text-red-700 transition-colors"
+                                  title="Remove Audio"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                           </div>
                           
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-col gap-2">
                             {scene.custom_audio_url ? (
-                              <div className="flex-grow flex items-center gap-2">
+                              <div className="flex items-center gap-2">
                                 <audio 
                                   src={`${API_BASE}${scene.custom_audio_url}`} 
+                                  key={scene.custom_audio_url}
                                   controls 
                                   className="h-8 flex-grow"
                                 />
@@ -533,34 +703,49 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                                 </span>
                               </div>
                             ) : (
-                              <div className="flex-grow">
-                                <input 
-                                  type="file" 
-                                  id={`audio-file-${index}`} 
-                                  className="hidden" 
-                                  accept="audio/*"
-                                  onChange={(e) => uploadSceneAudio(index, e.target.files[0])}
-                                />
+                              <div className="grid grid-cols-2 gap-2">
                                 <button 
-                                  className="w-full flex items-center justify-center gap-2 px-4 py-1.5 bg-white border border-blue-200 rounded text-blue-600 text-xs font-bold hover:bg-blue-50 transition-colors"
-                                  onClick={() => document.getElementById(`audio-file-${index}`).click()}
-                                  disabled={uploadingAudioIndex === index}
+                                  className="flex items-center justify-center gap-2 px-3 py-1.5 bg-primary text-white rounded text-[0.65rem] font-bold hover:bg-primary/95 transition-colors disabled:opacity-50"
+                                  onClick={() => generateAIVoice(index)}
+                                  disabled={isGeneratingVoice === index}
                                 >
-                                  {uploadingAudioIndex === index ? (
-                                    <Loader2 className="animate-spin w-3.5 h-3.5" />
+                                  {isGeneratingVoice === index ? (
+                                    <Loader2 className="animate-spin w-3 h-3" />
                                   ) : (
-                                    <Plus className="w-3.5 h-3.5" />
+                                    <RotateCw className="w-3 h-3" />
                                   )}
-                                  Upload Custom Voice (.mp3/.wav)
+                                  Generate AI Voice
                                 </button>
+                                
+                                <div className="relative">
+                                  <input 
+                                    type="file" 
+                                    id={`audio-file-${index}`} 
+                                    className="hidden" 
+                                    accept="audio/*"
+                                    onChange={(e) => uploadSceneAudio(index, e.target.files[0])}
+                                  />
+                                  <button 
+                                    className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-white border border-blue-200 rounded text-blue-600 text-[0.65rem] font-bold hover:bg-blue-50 transition-colors"
+                                    onClick={() => document.getElementById(`audio-file-${index}`).click()}
+                                    disabled={uploadingAudioIndex === index}
+                                  >
+                                    {uploadingAudioIndex === index ? (
+                                      <Loader2 className="animate-spin w-3 h-3" />
+                                    ) : (
+                                      <Plus className="w-3 h-3" />
+                                    )}
+                                    Upload Custom
+                                  </button>
+                                </div>
                               </div>
                             )}
+                            <p className="text-[0.65rem] text-blue-400 font-medium">
+                              {scene.custom_audio_url 
+                                ? "✓ Voice loaded. Click Pin (stable icon) to save as server default." 
+                                : `Generate AI voice for this ${index === 0 ? 'intro' : 'outro'} once, then Pin it to save credits forever.`}
+                            </p>
                           </div>
-                          <p className="mt-1.5 text-[0.65rem] text-blue-400 font-medium">
-                            {scene.custom_audio_url 
-                              ? "✓ Custom voice will be used instead of AI." 
-                              : "Optional: Replace AI voice with your own recording for this scene."}
-                          </p>
                         </div>
                       )}
                     </div>

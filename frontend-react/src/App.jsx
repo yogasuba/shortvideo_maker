@@ -403,6 +403,8 @@ function App() {
           }}
           API_BASE={API_BASE}
           addAlert={addAlert}
+          language={language}
+          selectedVoice={selectedVoice}
         />
       )}
     </div>

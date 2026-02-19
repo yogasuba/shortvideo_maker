@@ -63,7 +63,7 @@ class Config:
     STORAGE_DIR = BASE_DIR / "storage"
     
     # Create storage directories
-    for subdir in ["audio", "visuals", "videos", "temp", "scenes"]:
+    for subdir in ["audio", "visuals", "videos", "temp", "scenes", "system_defaults"]:
         (STORAGE_DIR / subdir).mkdir(parents=True, exist_ok=True)
     
     PROJECTS_FILE = STORAGE_DIR / "projects.json"
@@ -422,6 +422,72 @@ MUST output ONLY the JSON array.
             logging.warning(f"ALL AI GENERATION FAILED for {lang_name}. Falling back to using scene description as voice-over.")
             for scene in scenes:
                 scene["voice_over"] = scene["text"]
+
+        # FIXED INTRO/OUTRO FOR TAMIL (As requested by user)
+        if language == "ta" and len(scenes) > 0:
+            logging.info("Applying fixed Tamil intro/outro phrases...")
+            # First scene: Prepend fixed intro
+            intro_prefix = "வணக்கம், நேயர்களே! இன்றைய ஆலயத்துளிகள் தகவல்… "
+            if not scenes[0]["voice_over"].startswith(intro_prefix):
+                scenes[0]["voice_over"] = intro_prefix + scenes[0]["voice_over"]
+            
+            # Last scene: Replace with fixed outro
+            outro_text = "நன்றி.மேலும் பல ஆலயத்துளிகள் தகவல்களை அறிய எங்கள் YouTube சேனலை பாருங்கள்!"
+            scenes[-1]["voice_over"] = outro_text
+            scenes[-1]["text"] = outro_text
+
+            # SYSTEM-WIDE AUDIO DEFAULTS
+            # Check for permanent server-side intro/outro audio
+            defaults_dir = Config.STORAGE_DIR / "system_defaults"
+            
+            # Scene 1 default
+            intro_meta = defaults_dir / "default_intro.json"
+            if intro_meta.exists():
+                try:
+                    with open(intro_meta, "r") as f:
+                        meta = json.load(f)
+                    if os.path.exists(meta["path"]):
+                        # ONLY apply if the current voice_over text matches the pinned text
+                        # This allows users to add extra words and trigger a new generation
+                        pinned_text = meta.get("text", "").strip()
+                        current_text = scenes[0]["voice_over"].strip()
+                        
+                        if pinned_text == current_text:
+                            scenes[0]["audio_info"] = meta 
+                            scenes[0]["custom_audio_url"] = meta["url"]
+                            scenes[0]["custom_audio_path"] = meta["path"]
+                            scenes[0]["duration"] = meta["duration"]
+                            scenes[0]["duration_is_auto"] = False
+                            scenes[0]["is_system_default"] = True
+                            logging.info("✓ System Default Intro audio applied (Text matched)")
+                        else:
+                            logging.info("System Default Intro exists but text differs. Skipping auto-apply to allow new generation.")
+                except Exception as e:
+                    logging.error(f"Failed to load intro default: {e}")
+
+            # Last scene default
+            outro_meta = defaults_dir / "default_outro.json"
+            if outro_meta.exists():
+                try:
+                    with open(outro_meta, "r") as f:
+                        meta = json.load(f)
+                    if os.path.exists(meta["path"]):
+                        pinned_text = meta.get("text", "").strip()
+                        current_text = scenes[-1]["voice_over"].strip()
+                        
+                        if pinned_text == current_text:
+                            scenes[-1]["audio_info"] = meta
+                            scenes[-1]["custom_audio_url"] = meta["url"]
+                            scenes[-1]["custom_audio_path"] = meta["path"]
+                            scenes[-1]["duration"] = meta["duration"]
+                            scenes[-1]["duration_is_auto"] = False
+                            scenes[-1]["is_system_default"] = True
+                            logging.info("✓ System Default Outro audio applied (Text matched)")
+                        else:
+                            logging.info("System Default Outro exists but text differs. Skipping.")
+                except Exception as e:
+                    logging.error(f"Failed to load outro default: {e}")
+            
         return scenes
 
 
@@ -2332,6 +2398,52 @@ async def delete_project(project_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Update the preview endpoints to return proper data
+@app.post("/api/audio/set-default")
+async def set_audio_default(request: Dict[str, Any]):
+    """Promote a generated audio file to a system-wide default"""
+    try:
+        path = request.get("path")
+        audio_type = request.get("type") # 'intro' or 'outro'
+        
+        if not path or not os.path.exists(path):
+            raise UserInputError(f"Audio file not found: {path}")
+            
+        if audio_type not in ["intro", "outro"]:
+            raise UserInputError("Type must be 'intro' or 'outro'")
+            
+        dest_filename = f"default_{audio_type}.mp3"
+        dest_path = Config.STORAGE_DIR / "system_defaults" / dest_filename
+        
+        # Copy file to system defaults
+        shutil.copy2(path, dest_path)
+        
+        # Also copy the metadata (duration) if we can calculate it
+        duration = video_gen._get_audio_duration(Path(path))
+        
+        # Save metadata in a json file next to it
+        meta_path = dest_path.with_suffix(".json")
+        with open(meta_path, "w") as f:
+            json.dump({
+                "path": str(dest_path),
+                "url": f"/storage/system_defaults/{dest_filename}",
+                "duration": duration,
+                "text": request.get("text", ""), # Save the text to ensure matching
+                "type": audio_type,
+                "timestamp": datetime.now().isoformat()
+            }, f)
+            
+        return {
+            "success": True,
+            "message": f"Successfully set system default {audio_type}",
+            "data": {
+                "url": f"/storage/system_defaults/{dest_filename}",
+                "duration": duration
+            }
+        }
+    except Exception as e:
+        logging.error(f"Failed to set audio default: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/visuals/preview")
 async def preview_visual(
     text: str = Form(...),
@@ -2419,6 +2531,8 @@ async def preview_audio(request: Dict[str, Any]):
             "success": True,
             "data": {
                 "url": audio_info["url"],
+                "path": audio_info["path"],
+                "duration": audio_info["duration"],
                 "text": text[:100] + "..." if len(text) > 100 else text
             }
         }
