@@ -11,6 +11,7 @@ import math
 from PIL import ImageEnhance
 import shutil
 import unicodedata
+import hashlib
 
 # FastAPI
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile
@@ -563,14 +564,32 @@ class VideoGenerator:
                 logging.error("ElevenLabs client not initialized. Please provide ELEVENLABS_API_KEY in .env.")
                 return {"url": "", "duration": 5.0, "path": ""}
 
-            audio_id = f"audio_{uuid.uuid4().hex[:8]}"
-            audio_file = Config.STORAGE_DIR / "audio" / f"{audio_id}.mp3"
-            audio_file.parent.mkdir(parents=True, exist_ok=True)
-
             # Find the correct voice id or default to Rachel
             voice = voice_id if voice_id else "21m00Tcm4TlvDq8ikWAM"
             
-            logging.info(f"Generating ElevenLabs audio for voice {voice}...")
+            # Ensure storage directory exists
+            audio_dir = Config.STORAGE_DIR / "audio"
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            
+            # CONTENT-BASED CACHING: Prevent redundant ElevenLabs API calls
+            # MD5 hash of (text + voice) ensures uniqueness per narration
+            cache_key = f"{text}_{voice}_eleven_multilingual_v2"
+            cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
+            audio_file = Config.STORAGE_DIR / "audio" / f"cached_{cache_hash}.mp3"
+            
+            if audio_file.exists():
+                logging.info(f"✓ AUDIO CACHE HIT: Reusing existing audio for '{text[:30]}...' (Credit saved!)")
+                duration = self._get_audio_duration(audio_file)
+                return {
+                    "url": f"/storage/audio/{audio_file.name}",
+                    "duration": duration,
+                    "path": str(audio_file),
+                    "generation_text": text,
+                    "voice_id": voice,
+                    "cached": True
+                }
+
+            logging.info(f"Generating NEW ElevenLabs audio for voice {voice}...")
             
             # Call ElevenLabs API
             def _generate():
@@ -588,11 +607,12 @@ class VideoGenerator:
             if audio_file.exists():
                 duration = self._get_audio_duration(audio_file)
                 return {
-                    "url": f"/storage/audio/{audio_id}.mp3",
+                    "url": f"/storage/audio/{audio_file.name}",
                     "duration": duration,
                     "path": str(audio_file),
                     "generation_text": text,
-                    "voice_id": voice
+                    "voice_id": voice,
+                    "cached": False
                 }
             
             return {"url": "", "duration": 5.0, "path": ""}
