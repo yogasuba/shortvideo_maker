@@ -63,7 +63,11 @@ from postiz_auth import PostizAuthService
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),
+        logging.StreamHandler()
+    ]
 )
 # ========== CONFIGURATION ==========
 class Config:
@@ -2288,6 +2292,14 @@ async def combined_startup_event():
     
     # 1. Initialize DB
     try:
+        # Force File Logging (Uvicorn override fix)
+        import logging
+        root_logger = logging.getLogger()
+        file_handler = logging.FileHandler("app.log")
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
+        root_logger.setLevel(logging.INFO)
+        
         init_db()
         print("COMBINED STARTUP: DB Initialized.", flush=True, file=sys.stderr)
     except Exception as e:

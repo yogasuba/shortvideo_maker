@@ -69,6 +69,28 @@ if result.returncode != 0:
 
 org_id = result.stdout.strip()
 print(f"Organization ID: {org_id}")
+
+# Step 3.5: Get API Key
+print("Step 3.5: Fetching API Key...")
+result = subprocess.run(
+    ["docker", "exec", POSTGRES_CONTAINER, "psql", "-U", POSTGRES_USER, "-d", POSTGRES_DB, "-t", "-c", 
+     'SELECT "apiKey" FROM "Organization" LIMIT 1;'],
+    capture_output=True,
+    text=True
+)
+
+if result.returncode != 0:
+    print(f"Error: {result.stderr}")
+    print("Trying alternative table name 'organizations'...")
+    result = subprocess.run(
+        ["docker", "exec", POSTGRES_CONTAINER, "psql", "-U", POSTGRES_USER, "-d", POSTGRES_DB, "-t", "-c", 
+         'SELECT "apiKey" FROM organizations LIMIT 1;'],
+        capture_output=True,
+        text=True
+    )
+
+api_key = result.stdout.strip()
+print(f"API Key: {api_key}")
 print()
 
 # Step 4: Generate JWT Token
@@ -101,5 +123,10 @@ print("1. Copy the JWT token above")
 print("2. Update your .env file:")
 print(f"   POSTIZ_API_KEY={token}")
 print("3. Restart your backend server")
-print("4. Test with: python test_postiz_api.py")
-print("=" * 60)
+
+# Step 3.6: Save API Key to file
+print("Step 3.6: Saving API Key to postiz_api_key.txt...")
+with open("postiz_api_key.txt", "w") as f:
+    f.write(api_key)
+print("✅ API Key saved!")
+print()

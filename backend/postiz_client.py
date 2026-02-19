@@ -213,6 +213,9 @@ class PostizClient:
 
     async def get_integrations(self) -> List[Dict]:
         try:
+            # Debug API Key
+            masked_key = self.api_key[:10] + "..." if self.api_key else "None"
+            logger.info(f"Fetching integrations with API Key: {masked_key} from {self.base_url}")
             response = await self._request('GET', '/public/v1/integrations')
             
             if response:

@@ -192,22 +192,58 @@ async def process_state_machine(postiz_client: PostizClient):
             try:
                 # Poll status
                 status_data = await postiz_client.get_post_status(post.postiz_post_id)
-                # Status: 'scheduled', 'posted', 'failed'
-                status = status_data.get('status')
+                logger.info(f"MONITOR: Post {post.id} (Postiz {post.postiz_post_id}) status raw: {status_data}")
                 
-                if status == 'posted':
+                # Status: 'scheduled', 'posted', 'failed', 'SENT'
+                # Postiz 2.0 uses 'state' for some endpoints, 'status' for others.
+                status = status_data.get('status') or status_data.get('state')
+                
+                # Postiz 2.0 Compatibility: Check nested 'posts' array
+                if not status and 'posts' in status_data:
+                    posts_arr = status_data.get('posts', [])
+                    if isinstance(posts_arr, list) and len(posts_arr) > 0:
+                        # Assuming 1:1 mapping as we create 1 post per integration in Postiz
+                        # We specifically want the status of OUR integration.
+                        # But for now, take the first one or aggregated status.
+                        nested = posts_arr[0]
+                        # Check both status and state in nested object
+                        nested_status = nested.get('status') or nested.get('state')
+                        if nested_status:
+                            status = nested_status
+                            logger.info(f"MONITOR: Found nested status '{status}' in posts array.")
+
+                # Normalize Status
+                if status:
+                    status = status.upper() # Postiz uses 'SENT', 'FAILED', 'QUEUE', 'DONE' etc.
+                
+                # Map Postiz states to our internal states
+                # Success states: POSTED, SENT, COMPLETED, DONE, PUBLISHED
+                if status in ['POSTED', 'SENT', 'COMPLETED', 'DONE', 'PUBLISHED']:
                     post.postiz_status = "COMPLETED"
                     post.status = "posted" # Legacy field sync
                     post.fb_permalink = status_data.get('permalink_url') or status_data.get('permalink')
-                    logger.info(f"MONITOR: Post {post.id} COMPLETED.")
+                    
+                    # Try to find permalink in nested post if missing
+                    if not post.fb_permalink and 'posts' in status_data:
+                         posts_arr = status_data.get('posts', [])
+                         if len(posts_arr) > 0:
+                             post.fb_permalink = posts_arr[0].get('permalink') or posts_arr[0].get('permalinkUrl')
+
+                    logger.info(f"MONITOR: Post {post.id} COMPLETED. Permalink: {post.fb_permalink}")
                 
-                elif status == 'failed':
-                    error_msg = status_data.get('error') or "Unknown Postiz Error"
+                elif status in ['FAILED', 'ERROR']:
+                    error_msg = status_data.get('error')
+                    if not error_msg and 'posts' in status_data:
+                        posts_arr = status_data.get('posts', [])
+                        if len(posts_arr) > 0:
+                            error_msg = posts_arr[0].get('error')
+                    
+                    error_msg = error_msg or "Unknown Postiz Error"
                     raise PostizError(f"Execution Failed: {error_msg}", source="PLATFORM") 
-                    # Usually platform error if it failed AFTER creation.
                 
                 else:
-                    # Still scheduled/processing
+                    # Still scheduled/processing (e.g. QUEUE, SCHEDULED, PROCESSING)
+                    logger.info(f"MONITOR: Post {post.id} still '{status}' (Raw: {status_data})")
                     pass
 
             except PostizError as e:
