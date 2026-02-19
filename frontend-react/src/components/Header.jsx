@@ -1,7 +1,7 @@
 import React from 'react';
-import { Film, RotateCcw, Moon, Sun } from 'lucide-react';
+import { Film, RotateCcw, Moon, Sun, Clock } from 'lucide-react';
 
-const Header = ({ resetForm, toggleTheme, isDarkTheme }) => {
+const Header = ({ resetForm, toggleTheme, isDarkTheme, showHistory }) => {
   return (
     <div className="header">
       <div className="container-custom">
@@ -13,6 +13,9 @@ const Header = ({ resetForm, toggleTheme, isDarkTheme }) => {
           <div>
             <button className="btn btn-outline-primary mr-2 flex items-center" onClick={resetForm}>
               <RotateCcw className="w-4 h-4 mr-1" /> New
+            </button>
+            <button className="btn btn-outline-primary mr-2 flex items-center" onClick={showHistory}>
+              <Clock className="w-4 h-4 mr-1" /> History
             </button>
             <button className="btn-primary-custom flex items-center justify-center min-w-[45px]" onClick={toggleTheme}>
               {isDarkTheme ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}

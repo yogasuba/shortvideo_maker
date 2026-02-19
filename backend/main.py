@@ -65,6 +65,8 @@ class Config:
     for subdir in ["audio", "visuals", "videos", "temp", "scenes"]:
         (STORAGE_DIR / subdir).mkdir(parents=True, exist_ok=True)
     
+    PROJECTS_FILE = STORAGE_DIR / "projects.json"
+    
     # FFmpeg paths
     FFMPEG_PATH = os.path.normpath("C:/ffmpeg/bin/ffmpeg.exe")
     FFPROBE_PATH = os.path.normpath("C:/ffmpeg/bin/ffprobe.exe")
@@ -425,7 +427,8 @@ MUST output ONLY the JSON array.
 # ========== VIDEO GENERATOR ==========
 class VideoGenerator:
     def __init__(self):
-        self.projects = {}
+        self.projects = self._load_projects()
+        self._save_projects()  # Persist any discovered legacy projects
         self.voices = self._initialize_voices()
         self.image_styles = self._initialize_image_styles()
         self.script_processor = ScriptProcessor()
@@ -629,6 +632,72 @@ class VideoGenerator:
         except Exception as e:
             logging.error(f"Silent audio creation failed: {e}")
             return {"url": "", "duration": duration, "path": ""}
+
+    def _load_projects(self) -> Dict[str, Any]:
+        """Load projects from JSON file and discover orphan videos"""
+        projects = {}
+        if Config.PROJECTS_FILE.exists():
+            try:
+                with open(Config.PROJECTS_FILE, 'r', encoding='utf-8') as f:
+                    projects = json.load(f)
+            except Exception as e:
+                logging.error(f"Failed to load projects: {e}")
+        
+        # Discover orphan videos that aren't in the JSON
+        self._discover_legacy_videos(projects)
+        return projects
+
+    def _discover_legacy_videos(self, projects: Dict[str, Any]):
+        """Scan storage/videos and add orphans to projects as 'legacy' entries"""
+        videos_dir = Config.STORAGE_DIR / "videos"
+        if not videos_dir.exists():
+            return
+
+        # Get existing video URLs from projects
+        known_urls = {p.get("video_url") for p in projects.values() if p.get("video_url")}
+
+        for video_file in videos_dir.glob("*.mp4"):
+            video_url = f"/storage/videos/{video_file.name}"
+            if video_url not in known_urls:
+                # This is a legacy/orphan video
+                project_id = f"legacy_{video_file.stem}"
+                # Use file modification time as creation time
+                mtime = datetime.fromtimestamp(video_file.stat().st_mtime).isoformat()
+                
+                projects[project_id] = {
+                    "id": project_id,
+                    "title": f"Restored: {video_file.name}",
+                    "status": "completed",
+                    "progress": 100,
+                    "video_url": video_url,
+                    "created_at": mtime,
+                    "is_legacy": True
+                }
+                logging.info(f"Discovered legacy video: {video_file.name}")
+
+    def _save_projects(self):
+        """Save projects to JSON file"""
+        try:
+            logging.info(f"Attempting to save {len(self.projects)} projects to {Config.PROJECTS_FILE}")
+            # Ensure directory exists
+            Config.PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Use a temporary file for atomic write
+            temp_file = Config.PROJECTS_FILE.with_suffix(".tmp")
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(self.projects, f, indent=2, ensure_ascii=False)
+            
+            # Rename temp file to actual file
+            if os.path.exists(Config.PROJECTS_FILE):
+                os.replace(temp_file, Config.PROJECTS_FILE)
+            else:
+                os.rename(temp_file, Config.PROJECTS_FILE)
+                
+            logging.info(f"✓ Projects saved successfully to {Config.PROJECTS_FILE}")
+        except Exception as e:
+            logging.error(f"CRITICAL: Failed to save projects to {Config.PROJECTS_FILE}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
 
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get audio duration using ffprobe"""
@@ -1855,6 +1924,8 @@ class VideoGenerator:
             project["video_url"] = video_url
             project["completed_at"] = datetime.now().isoformat()
             
+            self._save_projects()
+            
             if video_url:
                 video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
                 if video_path.exists():
@@ -2117,50 +2188,53 @@ async def get_config():
 
 @app.post("/api/videos/create")
 async def create_video(request: VideoCreateRequest, background_tasks: BackgroundTasks):
-    """Create a video from script"""
-    try:
-        # Validate voice exists
-        valid_voices = [v["id"] for v in video_gen.get_voices()]
-        if request.voice not in valid_voices:
-            raise HTTPException(status_code=400, detail=f"Invalid voice. Must be one of: {valid_voices}")
-        
-        # Validate image style exists
-        valid_styles = [s["id"] for s in video_gen.get_image_styles()]
-        if request.image_style not in valid_styles:
-            raise HTTPException(status_code=400, detail=f"Invalid image style. Must be one of: {valid_styles}")
-        
-        project_id = f"project_{uuid.uuid4().hex[:8]}"
-        
-        # Store project
-        video_gen.projects[project_id] = {
-            "project_id": project_id,
-            "title": request.title,
-            "status": "processing",
-            "progress": 0,
-            "status_message": "Starting video creation...",
-            "created_at": datetime.now().isoformat(),
-            "video_url": None,
-            "error": None,
-            "script": request.script[:200] + "..." if len(request.script) > 200 else request.script,
-            "voice": request.voice,
-            "image_style": request.image_style
-        }
-        
-        # Start processing in background
-        background_tasks.add_task(video_gen.create_video, project_id, request)
-        
-        return {
-            "success": True,
-            "data": {
-                "project_id": project_id,
-                "status": "processing",
-                "check_status": f"/api/projects/{project_id}/status"
-            }
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    project_id = str(uuid.uuid4())
+    
+    # Track the full request data for re-editing
+    video_gen.projects[project_id] = {
+        "id": project_id,
+        "title": request.title,
+        "status": "processing",
+        "progress": 0,
+        "video_url": None,
+        "created_at": datetime.now().isoformat(),
+        "request_data": request.model_dump()
+    }
+    
+    video_gen._save_projects()
+    background_tasks.add_task(video_gen.create_video, project_id, request)
+    return {"success": True, "data": {"project_id": project_id}}
 
+@app.get("/api/projects")
+async def get_projects():
+    """List all projects sorted by date"""
+    try:
+        # Convert dict to list items suitable for front-end preview
+        history = []
+        for pid, p in video_gen.projects.items():
+            history.append({
+                "id": pid,
+                "title": p.get("title", "Untitled"),
+                "status": p.get("status", "unknown"),
+                "created_at": p.get("created_at"),
+                "video_url": p.get("video_url"),
+                "progress": p.get("progress", 0)
+            })
+        
+        # Sort by date descending
+        history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return {"success": True, "data": history}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/projects/{project_id}")
+async def get_project_details(project_id: str):
+    """Get full details of a specific project for re-editing"""
+    project = video_gen.projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"success": True, "data": project}
+        
 @app.get("/api/projects/{project_id}/status")
 async def get_project_status(project_id: str):
     """Get project status"""
