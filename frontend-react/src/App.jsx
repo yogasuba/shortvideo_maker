@@ -178,7 +178,8 @@ function App() {
             setIsGenerating(false);
           } else if (project.status === 'failed') {
             clearInterval(interval);
-            addAlert(`Video creation failed: ${project.error}`, 'error');
+            const errorMsg = project.error?.message || project.status_message || 'Video generation failed';
+            addAlert(`Error: ${errorMsg}`, 'error');
             setCurrentStep(4);
             setIsGenerating(false);
           }
@@ -193,18 +194,25 @@ function App() {
     const p = project.progress || 0;
     setProgress(p);
     
+    // Backend status messages take priority for better visibility (like "Reusing audio")
+    if (project.status_message && !project.status_message.includes('success')) {
+      setProgressStatus(project.status_message);
+      setProgressDetail(project.status_message.includes('scene') ? 'Optimizing scene assets' : 'Merging into final video');
+      return;
+    }
+
     if (p < 25) {
-      setProgressStatus('Processing your script...');
-      setProgressDetail('Splitting into scenes and analyzing content');
+      setProgressStatus('Processing script...');
+      setProgressDetail('Splitting and analyzing scenes');
     } else if (p < 50) {
-      setProgressStatus('Generating audio narration...');
-      setProgressDetail('Creating voiceovers for each scene');
+      setProgressStatus('Audio narration...');
+      setProgressDetail('Generating voiceovers');
     } else if (p < 75) {
       setProgressStatus('Creating visuals...');
-      setProgressDetail('Generating images for each scene in selected style');
+      setProgressDetail('Generating images');
     } else {
-      setProgressStatus('Stitching video together...');
-      setProgressDetail('Combining all scenes into final video');
+      setProgressStatus('Finalizing...');
+      setProgressDetail('Stitching it all together');
     }
   };
 

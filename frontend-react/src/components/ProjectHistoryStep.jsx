@@ -39,6 +39,29 @@ const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
     });
   };
 
+  const handleDelete = async (projectId) => {
+    if (!window.confirm('Are you sure you want to delete this project? This will also remove the video file from the server.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/projects/${projectId}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        // Update local state by filtering out the deleted project
+        setHistory(prev => prev.filter(p => p.id !== projectId));
+      } else {
+        alert(`Failed to delete project: ${data.error || data.detail || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Delete error:', err);
+      alert(`Error deleting project: ${err.message}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center p-20">
@@ -123,6 +146,13 @@ const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
                              <ExternalLink className="w-4 h-4" />
                            </a>
                          )}
+                         <button 
+                           onClick={() => handleDelete(project.id)}
+                           className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                           title="Delete Project"
+                         >
+                           <Trash2 className="w-4 h-4" />
+                         </button>
                       </div>
                     </td>
                   </tr>

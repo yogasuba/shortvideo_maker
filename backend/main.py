@@ -590,12 +590,19 @@ class VideoGenerator:
                 return {
                     "url": f"/storage/audio/{audio_id}.mp3",
                     "duration": duration,
-                    "path": str(audio_file)
+                    "path": str(audio_file),
+                    "generation_text": text,
+                    "voice_id": voice
                 }
             
             return {"url": "", "duration": 5.0, "path": ""}
 
         except Exception as e:
+            error_msg = str(e).lower()
+            if any(k in error_msg for k in ["quota", "credit", "insufficient"]):
+                logging.error(f"CRITICAL: ElevenLabs Quota Exceeded: {e}")
+                return {"url": "", "duration": 5.0, "path": "", "error_code": "QUOTA_EXCEEDED"}
+            
             logging.error(f"ElevenLabs audio generation error: {e}")
             return {"url": "", "duration": 5.0, "path": ""}
     
@@ -1872,7 +1879,36 @@ class VideoGenerator:
                     }
                 elif not show_image_only and scene.get("voice_over", scene.get("text")):
                     voice_text = scene.get("voice_over", scene["text"])
-                    audio_info = await self.generate_audio(voice_text, request.language, request.voice)
+                    
+                    # CACHING LOGIC: Skip AI call if text/voice is unchanged
+                    existing_audio = scene.get("audio_info")
+                    is_reusable = (
+                        existing_audio and 
+                        existing_audio.get("path") and 
+                        os.path.exists(existing_audio["path"]) and
+                        existing_audio.get("generation_text") == voice_text and
+                        existing_audio.get("voice_id") == request.voice
+                    )
+                    
+                    if is_reusable:
+                        logging.info(f"Credit Saver: Reusing existing audio for scene {i+1}")
+                        audio_info = existing_audio
+                        project["status_message"] = f"Reusing audio for scene {i+1}/{total_scenes} (Credit saved!)"
+                    else:
+                        logging.info(f"Generating new audio for scene {i+1}")
+                        project["status_message"] = f"Generating audio for scene {i+1}/{total_scenes}..."
+                        audio_info = await self.generate_audio(voice_text, request.language, request.voice)
+                        
+                        if audio_info.get("error_code") == "QUOTA_EXCEEDED":
+                            raise VideoPipelineError(
+                                "ElevenLabs Credits Exhausted",
+                                code="ELEVENLABS_QUOTA",
+                                details="Your account has run out of credits. Please top up your ElevenLabs account.",
+                                action="UPGRADE_PLAN"
+                            )
+                        
+                        if audio_info.get("path"):
+                            scene["audio_info"] = audio_info
                 else:
                     # Create silent audio for the specified duration
                     audio_info = await self._create_silent_audio(scene.get("duration", 5.0))
@@ -2246,6 +2282,34 @@ async def get_project_status(project_id: str):
         "success": True,
         "data": project
     }
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project and its associated video file"""
+    try:
+        project = video_gen.projects.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Delete physical video file if it exists
+        video_url = project.get("video_url")
+        if video_url:
+            video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
+            if video_path.exists():
+                try:
+                    video_path.unlink()
+                    logging.info(f"Deleted video file: {video_path}")
+                except Exception as e:
+                    logging.warning(f"Could not delete video file {video_path}: {e}")
+        
+        # Remove from projects dict
+        del video_gen.projects[project_id]
+        video_gen._save_projects()
+        
+        return {"success": True, "message": "Project deleted successfully"}
+    except Exception as e:
+        logging.error(f"Failed to delete project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Update the preview endpoints to return proper data
 @app.post("/api/visuals/preview")
