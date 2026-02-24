@@ -18,28 +18,31 @@ const GenerationProgressStep = ({
 
   const downloadVideo = async () => {
     if (!videoUrl) return;
-    setIsDownloading(true);
     
     try {
-      const response = await fetch(`${API_BASE}${videoUrl}`);
-      if (!response.ok) throw new Error('Download failed');
+      // Extract filename from the URL (handles both local and S3 URLs)
+      // For S3: https://.../videos/filename.mp4?query...
+      // For local: /storage/videos/filename.mp4
+      const urlPath = videoUrl.split('?')[0]; // Remove query params
+      const filename = urlPath.split('/').pop();
       
-      const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
+      if (!filename) throw new Error('Could not determine filename');
+      
+      // Use the backend's download proxy to bypass S3 CORS/cache issues
+      const downloadUri = `${API_BASE}/api/download/${filename}`;
+      
+      // Simple link click for download is more reliable than fetch+blob for large video files
       const link = document.createElement('a');
-      link.href = blobUrl;
-      const filename = videoUrl.split('/').pop() || `video_${Date.now()}.mp4`;
+      link.href = downloadUri;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
-      addAlert('Video downloaded successfully!', 'success');
+      
+      addAlert('Download started!', 'success');
     } catch (error) {
       console.error('Download error:', error);
-      addAlert('Failed to download video. Please try again.', 'error');
-    } finally {
-      setIsDownloading(false);
+      addAlert('Failed to prepare download. Please try again.', 'error');
     }
   };
 
@@ -75,7 +78,7 @@ const GenerationProgressStep = ({
             
             <div className={`video-preview mb-8 ${orientation === 'landscape' ? 'landscape' : ''}`}>
               <video controls autoPlay className="w-full h-full">
-                <source src={`${API_BASE}${videoUrl}`} type="video/mp4" />
+                <source src={videoUrl.startsWith('http') ? videoUrl : `${API_BASE}${videoUrl}`} type="video/mp4" />
                 Your browser does not support video playback.
               </video>
             </div>

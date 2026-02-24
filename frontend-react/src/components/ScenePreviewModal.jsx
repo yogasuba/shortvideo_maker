@@ -578,7 +578,7 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                         {scene.custom_image_url && (
                           <div className="relative inline-block group">
                             <img 
-                              src={`${API_BASE}${scene.custom_image_url}`} 
+                              src={scene.custom_image_url.startsWith('http') ? scene.custom_image_url : `${API_BASE}${scene.custom_image_url}`} 
                               alt="Scene image" 
                               className="rounded shadow-sm max-h-[140px] w-auto object-cover transition-transform duration-300"
                               style={{ transform: `rotate(${scene.rotation || 0}deg)` }}
@@ -693,7 +693,7 @@ const ScenePreviewModal = ({ data, setScenesPreview, onClose, onProceed, API_BAS
                             {scene.custom_audio_url ? (
                               <div className="flex items-center gap-2">
                                 <audio 
-                                  src={`${API_BASE}${scene.custom_audio_url}`} 
+                                  src={scene.custom_audio_url.startsWith('http') ? scene.custom_audio_url : `${API_BASE}${scene.custom_audio_url}`} 
                                   key={scene.custom_audio_url}
                                   controls 
                                   className="h-8 flex-grow"

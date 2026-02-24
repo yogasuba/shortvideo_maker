@@ -34,6 +34,8 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs import save
 import base64
 from openai import AsyncOpenAI
+import boto3
+from botocore.exceptions import ClientError
 
 # Complex script rendering
 from complex_script_renderer import ComplexScriptRenderer
@@ -44,6 +46,114 @@ from exceptions import (
     FFmpegError, TimeOutError, StorageError, AssetDownloadError,
     VideoConcatenationError
 )
+
+# ========== S3 STORAGE MANAGER ==========
+class S3Manager:
+    def __init__(self):
+        self.bucket_name = os.getenv("AWS_S3_BUCKET")
+        self.region = os.getenv("AWS_REGION", "us-east-1")
+        self.access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        self.secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        self.use_s3 = os.getenv("USE_S3", "false").lower() == "true"
+        
+        self.s3_client = None
+        if self.use_s3 and self.access_key and self.secret_key:
+            try:
+                self.s3_client = boto3.client(
+                    's3',
+                    aws_access_key_id=self.access_key,
+                    aws_secret_access_key=self.secret_key,
+                    region_name=self.region
+                )
+                logging.info(f"✓ S3 Client initialized for bucket: {self.bucket_name}")
+            except Exception as e:
+                logging.error(f"Failed to initialize S3 client: {e}")
+                self.use_s3 = False
+
+    def upload_file(self, local_path: Path, s3_key: str) -> Optional[str]:
+        """Upload a file to S3 and return its public URL or key reference"""
+        if not self.use_s3 or not self.s3_client:
+            return None
+        
+        try:
+            # Normalize key (S3 uses forward slashes)
+            s3_key = s3_key.replace("\\", "/")
+            
+            # Detect content type
+            content_type = "application/octet-stream"
+            if s3_key.endswith(".mp3"): content_type = "audio/mpeg"
+            elif s3_key.endswith(".mp4"): content_type = "video/mp4"
+            elif s3_key.endswith((".png", ".jpg", ".jpeg")): content_type = "image/png"
+            elif s3_key.endswith(".json"): content_type = "application/json"
+
+            self.s3_client.upload_file(
+                str(local_path), 
+                self.bucket_name, 
+                s3_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+            logging.info(f"✓ File uploaded to S3: {s3_key}")
+            return f"/s3/{s3_key}" # Internal routing prefix
+        except Exception as e:
+            logging.error(f"S3 upload failed for {s3_key}: {e}")
+            return None
+
+    def exists(self, s3_key: str) -> bool:
+        """Check if a file exists in S3"""
+        if not self.use_s3 or not self.s3_client:
+            return False
+        try:
+            s3_key = s3_key.replace("\\", "/")
+            self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            return True
+        except ClientError:
+            return False
+
+    def get_url(self, s3_key: str) -> str:
+        """Generate a presigned URL for the S3 object (valid for 24h)"""
+        if not self.use_s3 or not self.s3_client:
+            return f"/storage/{s3_key}"
+        
+        try:
+            safe_key = s3_key.replace("\\", "/")
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.bucket_name,
+                    'Key': safe_key
+                },
+                ExpiresIn=86400  # 24 hours
+            )
+            return url
+        except Exception as e:
+            safe_key = s3_key.replace("\\", "/")
+            return f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{safe_key}"
+
+    def download_file(self, s3_key: str, local_path: Path) -> bool:
+        """Download file from S3 to local disk"""
+        if not self.use_s3 or not self.s3_client:
+            return False
+        try:
+            s3_key = s3_key.replace("\\", "/")
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            self.s3_client.download_file(self.bucket_name, s3_key, str(local_path))
+            return True
+        except Exception as e:
+            logging.error(f"S3 download failed for {s3_key}: {e}")
+            return False
+
+    def delete_file(self, s3_key: str) -> bool:
+        """Delete file from S3"""
+        if not self.use_s3 or not self.s3_client:
+            return False
+        try:
+            s3_key = s3_key.replace("\\", "/")
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+            logging.info(f"✓ File deleted from S3: {s3_key}")
+            return True
+        except Exception as e:
+            logging.error(f"S3 delete failed for {s3_key}: {e}")
+            return False
 
 # Load environment variables
 env_path = Path(__file__).parent / ".env"
@@ -62,7 +172,12 @@ class Config:
     BASE_DIR = Path(__file__).parent
     STORAGE_DIR = BASE_DIR / "storage"
     
-    # Create storage directories
+    # S3 Manager
+    s3 = S3Manager()
+    USE_S3 = s3.use_s3
+    S3_BUCKET = s3.bucket_name
+    
+    # Create storage directories (always keep local for temporary processing)
     for subdir in ["audio", "visuals", "videos", "temp", "scenes", "system_defaults"]:
         (STORAGE_DIR / subdir).mkdir(parents=True, exist_ok=True)
     
@@ -438,55 +553,64 @@ MUST output ONLY the JSON array.
 
             # SYSTEM-WIDE AUDIO DEFAULTS
             # Check for permanent server-side intro/outro audio
-            defaults_dir = Config.STORAGE_DIR / "system_defaults"
             
-            # Scene 1 default
-            intro_meta = defaults_dir / "default_intro.json"
-            if intro_meta.exists():
-                try:
-                    with open(intro_meta, "r") as f:
-                        meta = json.load(f)
-                    if os.path.exists(meta["path"]):
-                        # ONLY apply if the current voice_over text matches the pinned text
-                        # This allows users to add extra words and trigger a new generation
+            # Helper to check and apply default
+            def apply_system_default(scene_index, default_type):
+                meta_key = f"system_defaults/default_{default_type}.json"
+                meta = None
+                
+                if Config.USE_S3:
+                    if Config.s3.exists(meta_key):
+                        # Download to temp
+                        temp_meta = Config.STORAGE_DIR / "temp" / f"s3_{default_type}_meta.json"
+                        if Config.s3.download_file(meta_key, temp_meta):
+                            try:
+                                with open(temp_meta, "r") as f:
+                                    meta = json.load(f)
+                            except: pass
+                else:
+                    local_meta = Config.STORAGE_DIR / "system_defaults" / f"default_{default_type}.json"
+                    if local_meta.exists():
+                        try:
+                            with open(local_meta, "r") as f:
+                                meta = json.load(f)
+                        except: pass
+                
+                if meta:
+                    # Check if file exists (locally or in S3)
+                    exists = False
+                    if Config.USE_S3:
+                        # meta["path"] in S3 meta should be the key
+                        exists = Config.s3.exists(meta.get("path", "").replace("\\", "/"))
+                    else:
+                        exists = os.path.exists(meta.get("path", ""))
+                    
+                    if exists:
                         pinned_text = meta.get("text", "").strip()
-                        current_text = scenes[0]["voice_over"].strip()
+                        current_text = scenes[scene_index]["voice_over"].strip()
                         
                         if pinned_text == current_text:
-                            scenes[0]["audio_info"] = meta 
-                            scenes[0]["custom_audio_url"] = meta["url"]
-                            scenes[0]["custom_audio_path"] = meta["path"]
-                            scenes[0]["duration"] = meta["duration"]
-                            scenes[0]["duration_is_auto"] = False
-                            scenes[0]["is_system_default"] = True
-                            logging.info("✓ System Default Intro audio applied (Text matched)")
+                            # Refresh URL if using S3
+                            url = meta["url"]
+                            if Config.USE_S3:
+                                # meta["path"] is the s3 key
+                                url = Config.s3.get_url(meta["path"])
+                                
+                            scenes[scene_index]["audio_info"] = meta 
+                            scenes[scene_index]["custom_audio_url"] = url
+                            scenes[scene_index]["custom_audio_path"] = meta["path"]
+                            scenes[scene_index]["duration"] = meta["duration"]
+                            scenes[scene_index]["duration_is_auto"] = False
+                            scenes[scene_index]["is_system_default"] = True
+                            logging.info(f"✓ System Default {default_type.capitalize()} audio applied (Text matched)")
                         else:
-                            logging.info("System Default Intro exists but text differs. Skipping auto-apply to allow new generation.")
-                except Exception as e:
-                    logging.error(f"Failed to load intro default: {e}")
+                            logging.info(f"System Default {default_type} exists but text differs.")
 
-            # Last scene default
-            outro_meta = defaults_dir / "default_outro.json"
-            if outro_meta.exists():
-                try:
-                    with open(outro_meta, "r") as f:
-                        meta = json.load(f)
-                    if os.path.exists(meta["path"]):
-                        pinned_text = meta.get("text", "").strip()
-                        current_text = scenes[-1]["voice_over"].strip()
-                        
-                        if pinned_text == current_text:
-                            scenes[-1]["audio_info"] = meta
-                            scenes[-1]["custom_audio_url"] = meta["url"]
-                            scenes[-1]["custom_audio_path"] = meta["path"]
-                            scenes[-1]["duration"] = meta["duration"]
-                            scenes[-1]["duration_is_auto"] = False
-                            scenes[-1]["is_system_default"] = True
-                            logging.info("✓ System Default Outro audio applied (Text matched)")
-                        else:
-                            logging.info("System Default Outro exists but text differs. Skipping.")
-                except Exception as e:
-                    logging.error(f"Failed to load outro default: {e}")
+            # Apply for scene 0 (intro)
+            apply_system_default(0, "intro")
+            
+            # Apply for last scene (outro)
+            apply_system_default(-1, "outro")
             
         return scenes
 
@@ -641,15 +765,42 @@ class VideoGenerator:
             # MD5 hash of (text + voice) ensures uniqueness per narration
             cache_key = f"{text}_{voice}_eleven_multilingual_v2"
             cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
-            audio_file = Config.STORAGE_DIR / "audio" / f"cached_{cache_hash}.mp3"
+            filename = f"cached_{cache_hash}.mp3"
+            audio_file = Config.STORAGE_DIR / "audio" / filename
+            s3_key = f"audio/{filename}"
             
+            # S3 CACHE CHECK
+            if Config.USE_S3 and Config.s3.exists(s3_key):
+                logging.info(f"✓ S3 AUDIO CACHE HIT: {s3_key}")
+                if not audio_file.exists():
+                    Config.s3.download_file(s3_key, audio_file)
+                
+                if audio_file.exists():
+                    duration = self._get_audio_duration(audio_file)
+                    return {
+                        "url": Config.s3.get_url(s3_key),
+                        "duration": duration,
+                        "path": str(audio_file),
+                        "s3_key": s3_key,
+                        "generation_text": text,
+                        "voice_id": voice,
+                        "cached": True
+                    }
+
+            # LOCAL CACHE CHECK
             if audio_file.exists():
-                logging.info(f"✓ AUDIO CACHE HIT: Reusing existing audio for '{text[:30]}...' (Credit saved!)")
+                logging.info(f"✓ LOCAL AUDIO CACHE HIT: {filename}")
                 duration = self._get_audio_duration(audio_file)
+                
+                # Upload to S3 if missing there but exists locally
+                if Config.USE_S3:
+                    Config.s3.upload_file(audio_file, s3_key)
+                
                 return {
-                    "url": f"/storage/audio/{audio_file.name}",
+                    "url": Config.s3.get_url(s3_key) if Config.USE_S3 else f"/storage/audio/{filename}",
                     "duration": duration,
                     "path": str(audio_file),
+                    "s3_key": s3_key if Config.USE_S3 else None,
                     "generation_text": text,
                     "voice_id": voice,
                     "cached": True
@@ -672,10 +823,16 @@ class VideoGenerator:
             
             if audio_file.exists():
                 duration = self._get_audio_duration(audio_file)
+                
+                # Upload to S3
+                if Config.USE_S3:
+                    Config.s3.upload_file(audio_file, s3_key)
+
                 return {
-                    "url": f"/storage/audio/{audio_file.name}",
+                    "url": Config.s3.get_url(s3_key) if Config.USE_S3 else f"/storage/audio/{filename}",
                     "duration": duration,
                     "path": str(audio_file),
+                    "s3_key": s3_key if Config.USE_S3 else None,
                     "generation_text": text,
                     "voice_id": voice,
                     "cached": False
@@ -811,6 +968,23 @@ class VideoGenerator:
             words = len(str(audio_path).split()) if isinstance(audio_path, str) else 0
             return max(3.0, min(words * 0.15, 10.0))
     
+    def _format_visual_response(self, visual_file: Path, style: str, visual_id: str) -> Dict:
+        """Helper to format visual response and upload to S3 if needed"""
+        s3_key = f"visuals/{visual_file.name}"
+        if Config.USE_S3:
+            Config.s3.upload_file(visual_file, s3_key)
+            return {
+                "url": Config.s3.get_url(s3_key),
+                "path": str(visual_file),
+                "s3_key": s3_key,
+                "style": style
+            }
+        return {
+            "url": f"/storage/visuals/{visual_id}.png",
+            "path": str(visual_file),
+            "style": style
+        }
+
     async def generate_visual(self, prompt: str, style: str, scene_number: int, resolution: str = "1080x1920", custom_image_path: Optional[str] = None) -> Dict:
         """Generate visual with AI providers or fallback to PIL"""
         try:
@@ -823,11 +997,7 @@ class VideoGenerator:
                 logging.info(f"Using custom image for scene {scene_number}: {custom_image_path}")
                 # Copy to visuals directory with a new name to avoid conflicts and ensure it's in the right place
                 shutil.copy2(custom_image_path, visual_file)
-                return {
-                    "url": f"/storage/visuals/{visual_id}.png",
-                    "path": str(visual_file),
-                    "style": "custom"
-                }
+                return self._format_visual_response(visual_file, "custom", visual_id)
 
             # Parse resolution for dimensions
             width, height = self._parse_resolution(resolution)
@@ -843,11 +1013,7 @@ class VideoGenerator:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
                             logging.info(f"✓ Found visual via Pexels (Style Priority): {visual_file}")
-                            return {
-                                "url": f"/storage/visuals/{visual_id}.png",
-                                "path": str(visual_file),
-                                "style": style
-                            }
+                            return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as pe:
                     logging.warning(f"Pexels search failed (Style Priority): {pe}")
 
@@ -862,11 +1028,7 @@ class VideoGenerator:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
                             logging.info(f"✓ Generated visual via Replicate: {visual_file}")
-                            return {
-                                "url": f"/storage/visuals/{visual_id}.png",
-                                "path": str(visual_file),
-                                "style": style
-                            }
+                            return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as re:
                     logging.warning(f"Replicate generation failed: {re}")
 
@@ -879,11 +1041,7 @@ class VideoGenerator:
                         with open(visual_file, "wb") as f:
                             f.write(image_data)
                         logging.info(f"✓ Generated visual via Stability: {visual_file}")
-                        return {
-                            "url": f"/storage/visuals/{visual_id}.png",
-                            "path": str(visual_file),
-                            "style": style
-                        }
+                        return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as se:
                     logging.warning(f"Stability generation failed: {se}")
 
@@ -896,11 +1054,7 @@ class VideoGenerator:
                         with open(visual_file, "wb") as f:
                             f.write(image_data)
                         logging.info(f"✓ Generated visual via HuggingFace: {visual_file}")
-                        return {
-                            "url": f"/storage/visuals/{visual_id}.png",
-                            "path": str(visual_file),
-                            "style": style
-                        }
+                        return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as he:
                     logging.warning(f"HuggingFace generation failed: {he}")
 
@@ -915,11 +1069,7 @@ class VideoGenerator:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
                             logging.info(f"✓ Found visual via Pexels: {visual_file}")
-                            return {
-                                "url": f"/storage/visuals/{visual_id}.png",
-                                "path": str(visual_file),
-                                "style": style
-                            }
+                            return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as pe:
                     logging.warning(f"Pexels search failed: {pe}")
 
@@ -929,11 +1079,7 @@ class VideoGenerator:
             img = self._add_scene_number_to_image(img, scene_number, style)
             img.save(str(visual_file), "PNG", quality=95)
             
-            return {
-                "url": f"/storage/visuals/{visual_id}.png",
-                "path": str(visual_file),
-                "style": style
-            }
+            return self._format_visual_response(visual_file, style, visual_id)
             
         except Exception as e:
             logging.error(f"Visual generation failed completely: {e}")
@@ -1966,9 +2112,9 @@ class VideoGenerator:
                 elif not show_image_only and scene.get("voice_over", scene.get("text")):
                     voice_text = scene.get("voice_over", scene["text"])
                     
-                    # CACHING LOGIC: Skip AI call if text/voice is unchanged
+                    # CACHING LOGIC: Skip AI call if text/voice is unchanged and file exists
                     existing_audio = scene.get("audio_info")
-                    is_reusable = (
+                    is_local_reuse = (
                         existing_audio and 
                         existing_audio.get("path") and 
                         os.path.exists(existing_audio["path"]) and
@@ -1976,14 +2122,20 @@ class VideoGenerator:
                         existing_audio.get("voice_id") == request.voice
                     )
                     
-                    if is_reusable:
-                        logging.info(f"Credit Saver: Reusing existing audio for scene {i+1}")
+                    if is_local_reuse:
+                        logging.info(f"Credit Saver: Fast-reusing local audio for scene {i+1}")
                         audio_info = existing_audio
-                        project["status_message"] = f"Reusing audio for scene {i+1}/{total_scenes} (Credit saved!)"
+                        project["status_message"] = f"Reusing local audio for scene {i+1}/{total_scenes} (Credit saved!)"
                     else:
-                        logging.info(f"Generating new audio for scene {i+1}")
-                        project["status_message"] = f"Generating audio for scene {i+1}/{total_scenes}..."
+                        # Even if local file is missing, generate_audio will check S3 cache
+                        logging.info(f"Checking cache/generating audio for scene {i+1}")
+                        project["status_message"] = f"Preparing audio for scene {i+1}/{total_scenes}..."
                         audio_info = await self.generate_audio(voice_text, request.language, request.voice)
+                        
+                        if audio_info.get("cached"):
+                            project["status_message"] = f"Audio cache hit for scene {i+1}/{total_scenes} (Credit saved!)"
+                        else:
+                            project["status_message"] = f"Generated new audio for scene {i+1}/{total_scenes}"
                         
                         if audio_info.get("error_code") == "QUOTA_EXCEEDED":
                             raise VideoPipelineError(
@@ -2038,25 +2190,30 @@ class VideoGenerator:
             # Determine if we should use demuxer (for complex scripts with ASS subtitles)
             use_demuxer = request.language in ComplexScriptRenderer.COMPLEX_SCRIPTS
             
-            video_url = await self._concatenate_videos(scene_videos, request.resolution, use_demuxer=use_demuxer)
+            video_url, video_s3_key = await self._concatenate_videos(scene_videos, request.resolution, use_demuxer=use_demuxer)
             
             # Update project
             project["progress"] = 100
             project["status"] = "completed" if video_url else "failed"
             project["video_url"] = video_url
+            project["video_s3_key"] = video_s3_key
             project["completed_at"] = datetime.now().isoformat()
             
             self._save_projects()
             
             if video_url:
-                video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
-                if video_path.exists():
-                    file_size = video_path.stat().st_size
-                    project["status_message"] = f"Video created successfully ({file_size/1024/1024:.1f} MB)"
-                    logging.info(f"Final video created: {video_path} ({file_size} bytes)")
+                if video_url.startswith('http'):
+                    project["status_message"] = "Video created successfully and stored in cloud"
+                    logging.info(f"Final video created and uploaded to S3: {video_url}")
                 else:
-                    project["status_message"] = "Video created but file not found"
-                    project["status"] = "failed"
+                    video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
+                    if video_path.exists():
+                        file_size = video_path.stat().st_size
+                        project["status_message"] = f"Video created successfully ({file_size/1024/1024:.1f} MB)"
+                        logging.info(f"Final video created: {video_path} ({file_size} bytes)")
+                    else:
+                        project["status_message"] = "Video created but local file not found"
+                        project["status"] = "failed"
             else:
                 project["status_message"] = "Failed to create video"
                 project["status"] = "failed"
@@ -2104,10 +2261,23 @@ class VideoGenerator:
             
             if use_demuxer:
                 logging.info(f"Using Concat Demuxer for {len(valid_videos)} videos (ASS Subtitles)...")
-                return await self._concatenate_with_demuxer(valid_videos, video_id)
+                video_file_path = await self._concatenate_with_demuxer(valid_videos, video_id)
             else:
                 logging.info(f"Using Filter Complex for {len(valid_videos)} videos (Standard)...")
-                return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+                video_file_path = await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+            
+            if video_file_path:
+                output_path = Path(video_file_path)
+                s3_key = f"videos/{output_path.name}"
+                if Config.USE_S3:
+                    if Config.s3.upload_file(output_path, s3_key):
+                        logging.info(f"✓ Video successfully persistent in S3: {s3_key}")
+                        return Config.s3.get_url(s3_key), s3_key
+                    else:
+                        logging.error(f"Failed to upload video to S3: {s3_key}. Using local fallback.")
+                        return f"/storage/videos/{output_path.name}", None
+                return f"/storage/videos/{output_path.name}", None
+            return None, None
                 
         except Exception as e:
             if isinstance(e, VideoPipelineError): raise e
@@ -2151,7 +2321,7 @@ class VideoGenerator:
                 file_size = output_file.stat().st_size
                 if file_size > 1024:
                     logging.info(f"✓ Demuxer Concatenation successful. Size: {file_size} bytes")
-                    return f"/storage/videos/{video_id}.mp4"
+                    return str(output_file)
                 else:
                     raise VideoConcatenationError("Concatenation produced empty video file", f"Size: {file_size} bytes")
             else:
@@ -2209,7 +2379,7 @@ class VideoGenerator:
                 file_size = output_file.stat().st_size
                 if file_size > 1024:
                     logging.info(f"✓ Concatenation successful. Size: {file_size} bytes")
-                    return f"/storage/videos/{video_id}.mp4"
+                    return str(output_file)
                 else:
                     raise FFmpegError("Concatenation produced empty video file", f"Size: {file_size} bytes")
             else:
@@ -2334,12 +2504,19 @@ async def get_projects():
         # Convert dict to list items suitable for front-end preview
         history = []
         for pid, p in video_gen.projects.items():
+            video_url = p.get("video_url")
+            s3_key = p.get("video_s3_key")
+            
+            # Refresh presigned URL if it's an S3 video
+            if Config.USE_S3 and s3_key:
+                video_url = Config.s3.get_url(s3_key)
+                
             history.append({
                 "id": pid,
                 "title": p.get("title", "Untitled"),
                 "status": p.get("status", "unknown"),
                 "created_at": p.get("created_at"),
-                "video_url": p.get("video_url"),
+                "video_url": video_url,
                 "progress": p.get("progress", 0)
             })
         
@@ -2355,6 +2532,12 @@ async def get_project_details(project_id: str):
     project = video_gen.projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+        
+    # Refresh presigned URL
+    s3_key = project.get("video_s3_key")
+    if Config.USE_S3 and s3_key:
+        project["video_url"] = Config.s3.get_url(s3_key)
+        
     return {"success": True, "data": project}
         
 @app.get("/api/projects/{project_id}/status")
@@ -2364,6 +2547,11 @@ async def get_project_status(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
+    # Refresh presigned URL
+    s3_key = project.get("video_s3_key")
+    if Config.USE_S3 and s3_key:
+        project["video_url"] = Config.s3.get_url(s3_key)
+        
     return {
         "success": True,
         "data": project
@@ -2380,13 +2568,24 @@ async def delete_project(project_id: str):
         # Delete physical video file if it exists
         video_url = project.get("video_url")
         if video_url:
-            video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
-            if video_path.exists():
+            if "amazonaws.com" in video_url:
+                # S3 URL: Extract key
+                # Format: https://bucket.s3.region.amazonaws.com/videos/filename.mp4
                 try:
-                    video_path.unlink()
-                    logging.info(f"Deleted video file: {video_path}")
+                    # Extract everything after the hostname
+                    s3_key = video_url.split(".com/")[-1]
+                    Config.s3.delete_file(s3_key)
                 except Exception as e:
-                    logging.warning(f"Could not delete video file {video_path}: {e}")
+                    logging.warning(f"Could not parse S3 URL {video_url} for deletion: {e}")
+            else:
+                # Local storage
+                video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
+                if video_path.exists():
+                    try:
+                        video_path.unlink()
+                        logging.info(f"Deleted local video file: {video_path}")
+                    except Exception as e:
+                        logging.warning(f"Could not delete local video file {video_path}: {e}")
         
         # Remove from projects dict
         del video_gen.projects[project_id]
@@ -2405,38 +2604,64 @@ async def set_audio_default(request: Dict[str, Any]):
         path = request.get("path")
         audio_type = request.get("type") # 'intro' or 'outro'
         
-        if not path or not os.path.exists(path):
-            raise UserInputError(f"Audio file not found: {path}")
+        if not path:
+            raise UserInputError("Path is required")
+            
+        # If it's an S3 key, we might need to download it for metadata calculation
+        # but path should be local according to our VideoGenerator refactor
+        if not os.path.exists(path):
+            if Config.USE_S3 and Config.s3.exists(path):
+                # Download to temp
+                temp_p = Config.STORAGE_DIR / "temp" / Path(path).name
+                Config.s3.download_file(path, temp_p)
+                path = str(temp_p)
+            else:
+                raise UserInputError(f"Audio file not found: {path}")
             
         if audio_type not in ["intro", "outro"]:
             raise UserInputError("Type must be 'intro' or 'outro'")
             
         dest_filename = f"default_{audio_type}.mp3"
         dest_path = Config.STORAGE_DIR / "system_defaults" / dest_filename
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Copy file to system defaults
+        # Copy file to system defaults locally
         shutil.copy2(path, dest_path)
         
-        # Also copy the metadata (duration) if we can calculate it
+        # Calculate duration
         duration = video_gen._get_audio_duration(Path(path))
         
-        # Save metadata in a json file next to it
+        # S3 Persistence
+        s3_key = f"system_defaults/{dest_filename}"
+        s3_meta_key = f"system_defaults/default_{audio_type}.json"
+        
+        url = f"/storage/system_defaults/{dest_filename}"
+        if Config.USE_S3:
+            Config.s3.upload_file(dest_path, s3_key)
+            url = Config.s3.get_url(s3_key)
+        
+        # Save metadata JSON
+        meta_data = {
+            "path": s3_key if Config.USE_S3 else str(dest_path),
+            "url": url,
+            "duration": duration,
+            "text": request.get("text", ""),
+            "type": audio_type,
+            "timestamp": datetime.now().isoformat()
+        }
+        
         meta_path = dest_path.with_suffix(".json")
         with open(meta_path, "w") as f:
-            json.dump({
-                "path": str(dest_path),
-                "url": f"/storage/system_defaults/{dest_filename}",
-                "duration": duration,
-                "text": request.get("text", ""), # Save the text to ensure matching
-                "type": audio_type,
-                "timestamp": datetime.now().isoformat()
-            }, f)
+            json.dump(meta_data, f)
+            
+        if Config.USE_S3:
+            Config.s3.upload_file(meta_path, s3_meta_key)
             
         return {
             "success": True,
             "message": f"Successfully set system default {audio_type}",
             "data": {
-                "url": f"/storage/system_defaults/{dest_filename}",
+                "url": url,
                 "duration": duration
             }
         }
@@ -2549,6 +2774,14 @@ async def test_text_overlay():
 async def download_video(video_filename: str):
     """Download generated video"""
     video_path = Config.STORAGE_DIR / "videos" / video_filename
+    
+    # If not found locally, try to download from S3
+    if not video_path.exists():
+        s3_key = f"videos/{video_filename}"
+        if Config.USE_S3 and Config.s3.exists(s3_key):
+            logging.info(f"Downloading {video_filename} from S3 for local download request")
+            Config.s3.download_file(s3_key, video_path)
+        
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
     
@@ -2582,11 +2815,19 @@ async def upload_scene_audio(file: UploadFile = File(...)):
         # Get duration
         duration = video_gen._get_audio_duration(file_path)
         
+        # S3 Support
+        s3_key = f"audio/{filename}"
+        url = f"/storage/audio/{filename}"
+        if Config.USE_S3:
+            Config.s3.upload_file(file_path, s3_key)
+            url = Config.s3.get_url(s3_key)
+
         return {
             "success": True,
             "data": {
-                "url": f"/storage/audio/{filename}",
+                "url": url,
                 "path": str(file_path),
+                "s3_key": s3_key if Config.USE_S3 else None,
                 "duration": duration
             }
         }
@@ -2614,12 +2855,20 @@ async def upload_scene_image(file: UploadFile = File(...)):
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
-        
+            
+        # S3 Support
+        s3_key = f"visuals/{filename}"
+        url = f"/storage/visuals/{filename}"
+        if Config.USE_S3:
+            Config.s3.upload_file(file_path, s3_key)
+            url = Config.s3.get_url(s3_key)
+
         return {
             "success": True,
             "data": {
-                "url": f"/storage/visuals/{filename}",
-                "path": str(file_path)
+                "url": url,
+                "path": str(file_path),
+                "s3_key": s3_key if Config.USE_S3 else None
             }
         }
     except Exception as e:

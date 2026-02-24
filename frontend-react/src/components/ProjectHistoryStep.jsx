@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Film, Pencil, ExternalLink, Loader2, AlertCircle, Trash2 } from 'lucide-react';
+import { Clock, Film, Pencil, Download, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 
 const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
   const [history, setHistory] = useState([]);
@@ -137,13 +137,13 @@ const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
                          )}
                          {project.video_url && (
                            <a 
-                             href={`${API_BASE}${project.video_url}`} 
+                             href={`${API_BASE}/api/download/${project.video_url.split('?')[0].split('/').pop()}`} 
                              target="_blank" 
                              rel="noopener noreferrer"
                              className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                             title="View Video"
+                             title="Download Video"
                            >
-                             <ExternalLink className="w-4 h-4" />
+                             <Download className="w-4 h-4" />
                            </a>
                          )}
                          <button 
