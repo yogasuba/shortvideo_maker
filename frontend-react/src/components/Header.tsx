@@ -1,5 +1,5 @@
 import React from 'react';
-import { Film, RotateCcw, Moon, Sun, Calendar, Share2 } from 'lucide-react';
+import { Film, RotateCcw, Moon, Sun, Calendar, Share2, Clock } from 'lucide-react';
 import { ViewType } from '../types';
 
 interface HeaderProps {
@@ -9,9 +9,10 @@ interface HeaderProps {
   setView: (view: ViewType) => void;
   isCalendarView: boolean;
   isIntegrationsView: boolean;
+  showHistory :boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView, isIntegrationsView }) => {
+const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView, isIntegrationsView,showHistory }) => {
   return (
     <div className="header">
       <div className="container-custom">
@@ -29,6 +30,9 @@ const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, se
               }}
             >
               <RotateCcw className="w-4 h-4 mr-1" /> New
+            </button>
+             <button className="btn btn-outline-primary mr-2 flex items-center" onClick={showHistory}>
+              <Clock className="w-4 h-4 mr-1" /> History
             </button>
             <button 
               className={`btn ${isCalendarView ? 'btn-primary-custom' : 'btn-outline-primary'} flex items-center`} 
