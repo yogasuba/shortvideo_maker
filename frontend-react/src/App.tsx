@@ -25,6 +25,7 @@ import type {
   ToneType,
   UsePersistentStateReturn
 } from './types';
+import ProjectHistoryStep from './components/ProjectHistoryStep';
 
 const API_BASE = 'http://localhost:8001';
 
@@ -222,6 +223,10 @@ function App(): React.JSX.Element {
               ? project.error 
               : project.error?.message || 'Unknown error';
             addAlert(`Video creation failed: ${errorMessage}`, 'error');
+            clearInterval(interval);
+            const errorMsg = project.error?.message || project.status_message || 'Video generation failed';
+            addAlert(`Error: ${errorMsg}`, 'error');
+            setCurrentStep(4);
             setIsGenerating(false);
             clearInterval(intervalId);
           }
@@ -238,18 +243,25 @@ function App(): React.JSX.Element {
     const p = project.progress || 0;
     setProgress(p);
     
+    // Backend status messages take priority for better visibility (like "Reusing audio")
+    if (project.status_message && !project.status_message.includes('success')) {
+      setProgressStatus(project.status_message);
+      setProgressDetail(project.status_message.includes('scene') ? 'Optimizing scene assets' : 'Merging into final video');
+      return;
+    }
+
     if (p < 25) {
-      setProgressStatus('Processing your script...');
-      setProgressDetail('Splitting into scenes and analyzing content');
+      setProgressStatus('Processing script...');
+      setProgressDetail('Splitting and analyzing scenes');
     } else if (p < 50) {
-      setProgressStatus('Generating audio narration...');
-      setProgressDetail('Creating voiceovers for each scene');
+      setProgressStatus('Audio narration...');
+      setProgressDetail('Generating voiceovers');
     } else if (p < 75) {
       setProgressStatus('Creating visuals...');
-      setProgressDetail('Generating images for each scene in selected style');
+      setProgressDetail('Generating images');
     } else {
-      setProgressStatus('Stitching video together...');
-      setProgressDetail('Combining all scenes into final video');
+      setProgressStatus('Finalizing...');
+      setProgressDetail('Stitching it all together');
     }
   };
 
@@ -274,7 +286,113 @@ function App(): React.JSX.Element {
     addAlert('Ready to create another video!', 'success');
   };
 
-  const toggleTheme = (): void => {
+  const handleEdit = () => {
+    setIsCompleted(false);
+    setIsGenerating(false);
+    setProgress(0);
+    setCurrentStep(2);
+    setShowPreviewModal(true);
+  };
+
+  const handleEditHistory = async (projectId) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/projects/${projectId}`);
+      const data = await response.json();
+      if (data.success) {
+        const p = data.data;
+        const req = p.request_data;
+        
+        // Populate state with project data
+        setVideoTitle(p.title || '');
+        setLanguage(req.language || 'en');
+        setTone(req.tone || 'neutral');
+        setScenesCount(req.scenes_count || 8);
+        setResolution(req.resolution || '1080x1920');
+        setOrientation(req.resolution?.includes('1920x1080') ? 'landscape' : 'portrait');
+        setSubtitleStyle(req.subtitle_style || 'static');
+        setScript(req.script || '');
+        setSelectedVoice(req.voice || '');
+        setSelectedStyle(req.image_style || 'pexels');
+        
+        // If it has scenes, load them
+        if (p.scenes) {
+          setScenesPreview({
+            scenes: p.scenes,
+            total_scenes: p.scenes.length
+          });
+          setCurrentStep(2);
+          setShowPreviewModal(true);
+        } else {
+          setScenesPreview(null);
+          setCurrentStep(1);
+        }
+        
+        setIsCompleted(false);
+        setIsGenerating(false);
+        setProgress(0);
+        
+      } else {
+        throw new Error(data.error || 'Failed to load project details');
+      }
+    } catch (error) {
+      addAlert(`Error loading project: ${error.message}`, 'error');
+    }
+  };
+
+  const handleEdit = () => {
+    setIsCompleted(false);
+    setIsGenerating(false);
+    setProgress(0);
+    setCurrentStep(2);
+    setShowPreviewModal(true);
+  };
+
+  const handleEditHistory = async (projectId) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/projects/${projectId}`);
+      const data = await response.json();
+      if (data.success) {
+        const p = data.data;
+        const req = p.request_data;
+        
+        // Populate state with project data
+        setVideoTitle(p.title || '');
+        setLanguage(req.language || 'en');
+        setTone(req.tone || 'neutral');
+        setScenesCount(req.scenes_count || 8);
+        setResolution(req.resolution || '1080x1920');
+        setOrientation(req.resolution?.includes('1920x1080') ? 'landscape' : 'portrait');
+        setSubtitleStyle(req.subtitle_style || 'static');
+        setScript(req.script || '');
+        setSelectedVoice(req.voice || '');
+        setSelectedStyle(req.image_style || 'pexels');
+        
+        // If it has scenes, load them
+        if (p.scenes) {
+          setScenesPreview({
+            scenes: p.scenes,
+            total_scenes: p.scenes.length
+          });
+          setCurrentStep(2);
+          setShowPreviewModal(true);
+        } else {
+          setScenesPreview(null);
+          setCurrentStep(1);
+        }
+        
+        setIsCompleted(false);
+        setIsGenerating(false);
+        setProgress(0);
+        
+      } else {
+        throw new Error(data.error || 'Failed to load project details');
+      }
+    } catch (error) {
+      addAlert(`Error loading project: ${error.message}`, 'error');
+    }
+  };
+
+  const toggleTheme = () => {
     setIsDarkTheme(!isDarkTheme);
     document.body.classList.toggle('dark-theme');
   };
@@ -298,10 +416,11 @@ function App(): React.JSX.Element {
       <Header 
         resetForm={resetForm} 
         toggleTheme={toggleTheme} 
-        isDarkTheme={isDarkTheme} 
+        isDarkTheme={isDarkTheme}
         setView={setView}
         isCalendarView={view === 'calendar'}
         isIntegrationsView={view === 'integrations'}
+        showHistory={() => setCurrentStep(0)}
       />
       
       <div className="container-custom">
@@ -322,6 +441,14 @@ function App(): React.JSX.Element {
               />
             )}
             
+        {currentStep === 0 && (
+          <ProjectHistoryStep 
+            API_BASE={API_BASE}
+            onEdit={handleEditHistory}
+            onNew={resetForm}
+          />
+        )}
+
             {currentStep === 1 && (
           <VideoDetailsStep 
             videoTitle={videoTitle}
@@ -350,6 +477,7 @@ function App(): React.JSX.Element {
             setScript={setScript}
             language={language}
             scenesCount={scenesCount}
+            scenesPreview={scenesPreview}
             setScenesPreview={setScenesPreview}
             setShowPreviewModal={setShowPreviewModal}
             prevStep={() => prevStep(1)}
@@ -392,6 +520,7 @@ function App(): React.JSX.Element {
             projectId={currentProjectId}
             orientation={orientation}
             resetForm={resetForm}
+            onEdit={handleEdit}
             API_BASE={API_BASE}
             addAlert={addAlert}
           />
@@ -411,6 +540,8 @@ function App(): React.JSX.Element {
           }}
           API_BASE={API_BASE}
           addAlert={addAlert}
+          language={language}
+          selectedVoice={selectedVoice}
         />
       )}
     </div>

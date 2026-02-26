@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 # Load environment variables FIRST
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
+import hashlib
 
 # FastAPI
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends
@@ -39,6 +40,8 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs import save
 import base64
 from openai import AsyncOpenAI
+import boto3
+from botocore.exceptions import ClientError
 
 # Complex script rendering
 from complex_script_renderer import ComplexScriptRenderer
@@ -49,6 +52,114 @@ from exceptions import (
     FFmpegError, TimeOutError, StorageError, AssetDownloadError,
     VideoConcatenationError
 )
+
+# ========== S3 STORAGE MANAGER ==========
+class S3Manager:
+    def __init__(self):
+        self.bucket_name = os.getenv("AWS_S3_BUCKET")
+        self.region = os.getenv("AWS_REGION", "us-east-1")
+        self.access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        self.secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        self.use_s3 = os.getenv("USE_S3", "false").lower() == "true"
+        
+        self.s3_client = None
+        if self.use_s3 and self.access_key and self.secret_key:
+            try:
+                self.s3_client = boto3.client(
+                    's3',
+                    aws_access_key_id=self.access_key,
+                    aws_secret_access_key=self.secret_key,
+                    region_name=self.region
+                )
+                logging.info(f"✓ S3 Client initialized for bucket: {self.bucket_name}")
+            except Exception as e:
+                logging.error(f"Failed to initialize S3 client: {e}")
+                self.use_s3 = False
+
+    def upload_file(self, local_path: Path, s3_key: str) -> Optional[str]:
+        """Upload a file to S3 and return its public URL or key reference"""
+        if not self.use_s3 or not self.s3_client:
+            return None
+        
+        try:
+            # Normalize key (S3 uses forward slashes)
+            s3_key = s3_key.replace("\\", "/")
+            
+            # Detect content type
+            content_type = "application/octet-stream"
+            if s3_key.endswith(".mp3"): content_type = "audio/mpeg"
+            elif s3_key.endswith(".mp4"): content_type = "video/mp4"
+            elif s3_key.endswith((".png", ".jpg", ".jpeg")): content_type = "image/png"
+            elif s3_key.endswith(".json"): content_type = "application/json"
+
+            self.s3_client.upload_file(
+                str(local_path), 
+                self.bucket_name, 
+                s3_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+            logging.info(f"✓ File uploaded to S3: {s3_key}")
+            return f"/s3/{s3_key}" # Internal routing prefix
+        except Exception as e:
+            logging.error(f"S3 upload failed for {s3_key}: {e}")
+            return None
+
+    def exists(self, s3_key: str) -> bool:
+        """Check if a file exists in S3"""
+        if not self.use_s3 or not self.s3_client:
+            return False
+        try:
+            s3_key = s3_key.replace("\\", "/")
+            self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            return True
+        except ClientError:
+            return False
+
+    def get_url(self, s3_key: str) -> str:
+        """Generate a presigned URL for the S3 object (valid for 24h)"""
+        if not self.use_s3 or not self.s3_client:
+            return f"/storage/{s3_key}"
+        
+        try:
+            safe_key = s3_key.replace("\\", "/")
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.bucket_name,
+                    'Key': safe_key
+                },
+                ExpiresIn=86400  # 24 hours
+            )
+            return url
+        except Exception as e:
+            safe_key = s3_key.replace("\\", "/")
+            return f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{safe_key}"
+
+    def download_file(self, s3_key: str, local_path: Path) -> bool:
+        """Download file from S3 to local disk"""
+        if not self.use_s3 or not self.s3_client:
+            return False
+        try:
+            s3_key = s3_key.replace("\\", "/")
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            self.s3_client.download_file(self.bucket_name, s3_key, str(local_path))
+            return True
+        except Exception as e:
+            logging.error(f"S3 download failed for {s3_key}: {e}")
+            return False
+
+    def delete_file(self, s3_key: str) -> bool:
+        """Delete file from S3"""
+        if not self.use_s3 or not self.s3_client:
+            return False
+        try:
+            s3_key = s3_key.replace("\\", "/")
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+            logging.info(f"✓ File deleted from S3: {s3_key}")
+            return True
+        except Exception as e:
+            logging.error(f"S3 delete failed for {s3_key}: {e}")
+            return False
 
 # New Integrations
 from database import init_db, get_db, Integration, ScheduledPost
@@ -74,9 +185,16 @@ class Config:
     BASE_DIR = Path(__file__).parent
     STORAGE_DIR = BASE_DIR / "storage"
     
-    # Create storage directories
-    for subdir in ["audio", "visuals", "videos", "temp", "scenes"]:
+    # S3 Manager
+    s3 = S3Manager()
+    USE_S3 = s3.use_s3
+    S3_BUCKET = s3.bucket_name
+    
+    # Create storage directories (always keep local for temporary processing)
+    for subdir in ["audio", "visuals", "videos", "temp", "scenes", "system_defaults"]:
         (STORAGE_DIR / subdir).mkdir(parents=True, exist_ok=True)
+    
+    PROJECTS_FILE = STORAGE_DIR / "projects.json"
     
     # FFmpeg paths
     FFMPEG_PATH = os.path.normpath("C:/ffmpeg/bin/ffmpeg.exe")
@@ -193,6 +311,9 @@ class VideoCreateRequest(BaseModel):
     resolution: str = "1080x1920"
     scenes_count: int = Field(8, ge=4, le=16)
     subtitle_style: str = "static"  # Options: "static", "scroll_up"
+    subtitle_color: str = "white"
+    subtitle_bg_visible: bool = True
+    subtitle_bold: bool = False
     scenes: Optional[List[Dict[str, Any]]] = None
     
     @field_validator('language')
@@ -259,10 +380,15 @@ class ScriptProcessor:
                     else:
                         scene_text = scene_text[:117] + "..."
                 
+                # Estimate duration based on word count (approx 2.5 words per second)
+                word_count = len(scene_text.split())
+                estimated_duration = max(3, min(math.ceil(word_count / 2.5), 10))
+                
                 scenes.append({
                     "scene_number": scene_counter,
                     "text": scene_text,
-                    "duration": 5,
+                    "duration": estimated_duration,
+                    "duration_is_auto": True,
                     "visual_prompt": f"Scene {scene_counter}: {scene_text}"  # More descriptive for Pexels
                 })
                 
@@ -358,24 +484,36 @@ MUST output ONLY the JSON array.
         openai_key = os.getenv("OPENAI_API_KEY")
         if openai_key and (openai_key.startswith("sk-") or openai_key.startswith("sk-proj-")):
             try:
-                logging.info("DEBUG: Attempting OpenAI Direct...")
+                logging.info(f"DEBUG: Attempting OpenAI Direct for {lang_name}...")
                 client = AsyncOpenAI(api_key=openai_key)
-                # Use GPT-4o if possible, fallback to gpt-3.5-turbo
                 for model in ["gpt-4o", "gpt-3.5-turbo"]:
-                    voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
-                    if voice_overs:
-                        logging.info(f"✓ Success with OpenAI Direct model: {model}")
-                        break
+                    try:
+                        voice_overs = await asyncio.wait_for(
+                            generate_with_client(client, model, system_prompt, user_prompt),
+                            timeout=30
+                        )
+                        if voice_overs:
+                            logging.info(f"✓ Success with OpenAI Direct model: {model}")
+                            break
+                    except asyncio.TimeoutError:
+                        logging.error(f"OpenAI Direct ({model}) request timed out")
+                    except Exception as e:
+                        if "insufficient_quota" in str(e):
+                            logging.error(f"OpenAI Quota Exceeded: {e}")
+                            break # Don't try other models if quota is gone
+                        logging.error(f"OpenAI model {model} failed: {e}")
             except Exception as e:
                 logging.error(f"OpenAI Direct setup failed: {e}")
 
         # 2. Try OpenRouter (if OpenAI failed or key missing)
         if not voice_overs:
             openrouter_key = os.getenv("OPENROUTER_API_KEY")
-            # Only try OpenRouter if it's NOT an OpenAI key used mistakenly as OpenRouter key
-            if openrouter_key and not (openrouter_key.startswith("sk-proj-") or openrouter_key.startswith("sk-")):
+            if openrouter_key:
+                # Warning: Use OpenAI keys with OpenAI, and OpenRouter keys with OpenRouter
+                is_openai_key = openrouter_key.startswith("sk-proj-") or openrouter_key.startswith("sk-")
+                
                 try:
-                    logging.info("DEBUG: Attempting OpenRouter...")
+                    logging.info(f"DEBUG: Attempting OpenRouter for {lang_name}...")
                     client = AsyncOpenAI(
                         api_key=openrouter_key,
                         base_url="https://openrouter.ai/api/v1"
@@ -383,40 +521,124 @@ MUST output ONLY the JSON array.
                     # Try a few reliable FREE models on OpenRouter
                     models = [
                         "google/gemini-2.0-flash-exp:free",
-                        "google/gemini-2.0-flash-thinking-exp:free",
-                        "mistralai/pixtral-12b:free",
-                        "qwen/qwen-2-7b-instruct:free",
+                        "google/gemini-pro-1.5-exp",
+                        "mistralai/mistral-7b-instruct:free",
                         "openai/gpt-3.5-turbo"
                     ]
                     
                     for model in models:
-                        voice_overs = await generate_with_client(client, model, system_prompt, user_prompt)
-                        if voice_overs:
-                            logging.info(f"✓ Success with OpenRouter model: {model}")
-                            break
+                        try:
+                            voice_overs = await asyncio.wait_for(
+                                generate_with_client(client, model, system_prompt, user_prompt),
+                                timeout=30
+                            )
+                            if voice_overs:
+                                logging.info(f"✓ Success with OpenRouter model: {model}")
+                                break
+                        except asyncio.TimeoutError:
+                            logging.warning(f"Timeout with OpenRouter model: {model}")
+                        except Exception as e:
+                            logging.error(f"OpenRouter model {model} failed: {e}")
                 except Exception as e:
                     logging.error(f"OpenRouter setup failed: {e}")
 
         # Apply results or fallback
         if voice_overs:
-            logging.info("DEBUG: Applying generated voice-overs.")
+            logging.info(f"DEBUG: Applying generated voice-overs for language {language} ({lang_name}).")
             for i, scene in enumerate(scenes):
                 # Safety check for duplicates
                 if voice_overs[i].strip().lower() == scene["text"].strip().lower():
                     logging.warning(f"Scene {i+1} voice-over identical to text. AI ignored instructions.")
                 
                 scene["voice_over"] = voice_overs[i]
+                logging.info(f"DEBUG: Scene {i+1} Voice-Over: {voice_overs[i][:50]}...")
         else:
-            logging.warning("ALL AI GENERATION FAILED. Falling back to using scene description as voice-over.")
+            logging.warning(f"ALL AI GENERATION FAILED for {lang_name}. Falling back to using scene description as voice-over.")
             for scene in scenes:
                 scene["voice_over"] = scene["text"]
+
+        # FIXED INTRO/OUTRO FOR TAMIL (As requested by user)
+        if language == "ta" and len(scenes) > 0:
+            logging.info("Applying fixed Tamil intro/outro phrases...")
+            # First scene: Prepend fixed intro
+            intro_prefix = "வணக்கம், நேயர்களே! இன்றைய ஆலயத்துளிகள் தகவல்… "
+            if not scenes[0]["voice_over"].startswith(intro_prefix):
+                scenes[0]["voice_over"] = intro_prefix + scenes[0]["voice_over"]
+            
+            # Last scene: Replace with fixed outro
+            outro_text = "நன்றி.மேலும் பல ஆலயத்துளிகள் தகவல்களை அறிய எங்கள் YouTube சேனலை பாருங்கள்!"
+            scenes[-1]["voice_over"] = outro_text
+            scenes[-1]["text"] = outro_text
+
+            # SYSTEM-WIDE AUDIO DEFAULTS
+            # Check for permanent server-side intro/outro audio
+            
+            # Helper to check and apply default
+            def apply_system_default(scene_index, default_type):
+                meta_key = f"system_defaults/default_{default_type}.json"
+                meta = None
+                
+                if Config.USE_S3:
+                    if Config.s3.exists(meta_key):
+                        # Download to temp
+                        temp_meta = Config.STORAGE_DIR / "temp" / f"s3_{default_type}_meta.json"
+                        if Config.s3.download_file(meta_key, temp_meta):
+                            try:
+                                with open(temp_meta, "r") as f:
+                                    meta = json.load(f)
+                            except: pass
+                else:
+                    local_meta = Config.STORAGE_DIR / "system_defaults" / f"default_{default_type}.json"
+                    if local_meta.exists():
+                        try:
+                            with open(local_meta, "r") as f:
+                                meta = json.load(f)
+                        except: pass
+                
+                if meta:
+                    # Check if file exists (locally or in S3)
+                    exists = False
+                    if Config.USE_S3:
+                        # meta["path"] in S3 meta should be the key
+                        exists = Config.s3.exists(meta.get("path", "").replace("\\", "/"))
+                    else:
+                        exists = os.path.exists(meta.get("path", ""))
+                    
+                    if exists:
+                        pinned_text = meta.get("text", "").strip()
+                        current_text = scenes[scene_index]["voice_over"].strip()
+                        
+                        if pinned_text == current_text:
+                            # Refresh URL if using S3
+                            url = meta["url"]
+                            if Config.USE_S3:
+                                # meta["path"] is the s3 key
+                                url = Config.s3.get_url(meta["path"])
+                                
+                            scenes[scene_index]["audio_info"] = meta 
+                            scenes[scene_index]["custom_audio_url"] = url
+                            scenes[scene_index]["custom_audio_path"] = meta["path"]
+                            scenes[scene_index]["duration"] = meta["duration"]
+                            scenes[scene_index]["duration_is_auto"] = False
+                            scenes[scene_index]["is_system_default"] = True
+                            logging.info(f"✓ System Default {default_type.capitalize()} audio applied (Text matched)")
+                        else:
+                            logging.info(f"System Default {default_type} exists but text differs.")
+
+            # Apply for scene 0 (intro)
+            apply_system_default(0, "intro")
+            
+            # Apply for last scene (outro)
+            apply_system_default(-1, "outro")
+            
         return scenes
 
 
 # ========== VIDEO GENERATOR ==========
 class VideoGenerator:
     def __init__(self):
-        self.projects = {}
+        self.projects = self._load_projects()
+        self._save_projects()  # Persist any discovered legacy projects
         self.voices = self._initialize_voices()
         self.image_styles = self._initialize_image_styles()
         self.script_processor = ScriptProcessor()
@@ -567,14 +789,59 @@ class VideoGenerator:
                 logging.error("ElevenLabs client not initialized. Please provide ELEVENLABS_API_KEY in .env.")
                 return {"url": "", "duration": 5.0, "path": ""}
 
-            audio_id = f"audio_{uuid.uuid4().hex[:8]}"
-            audio_file = Config.STORAGE_DIR / "audio" / f"{audio_id}.mp3"
-            audio_file.parent.mkdir(parents=True, exist_ok=True)
-
             # Find the correct voice id or default to Rachel
             voice = voice_id if voice_id else "21m00Tcm4TlvDq8ikWAM"
             
-            logging.info(f"Generating ElevenLabs audio for voice {voice}...")
+            # Ensure storage directory exists
+            audio_dir = Config.STORAGE_DIR / "audio"
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            
+            # CONTENT-BASED CACHING: Prevent redundant ElevenLabs API calls
+            # MD5 hash of (text + voice) ensures uniqueness per narration
+            cache_key = f"{text}_{voice}_eleven_multilingual_v2"
+            cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
+            filename = f"cached_{cache_hash}.mp3"
+            audio_file = Config.STORAGE_DIR / "audio" / filename
+            s3_key = f"audio/{filename}"
+            
+            # S3 CACHE CHECK
+            if Config.USE_S3 and Config.s3.exists(s3_key):
+                logging.info(f"✓ S3 AUDIO CACHE HIT: {s3_key}")
+                if not audio_file.exists():
+                    Config.s3.download_file(s3_key, audio_file)
+                
+                if audio_file.exists():
+                    duration = self._get_audio_duration(audio_file)
+                    return {
+                        "url": Config.s3.get_url(s3_key),
+                        "duration": duration,
+                        "path": str(audio_file),
+                        "s3_key": s3_key,
+                        "generation_text": text,
+                        "voice_id": voice,
+                        "cached": True
+                    }
+
+            # LOCAL CACHE CHECK
+            if audio_file.exists():
+                logging.info(f"✓ LOCAL AUDIO CACHE HIT: {filename}")
+                duration = self._get_audio_duration(audio_file)
+                
+                # Upload to S3 if missing there but exists locally
+                if Config.USE_S3:
+                    Config.s3.upload_file(audio_file, s3_key)
+                
+                return {
+                    "url": Config.s3.get_url(s3_key) if Config.USE_S3 else f"/storage/audio/{filename}",
+                    "duration": duration,
+                    "path": str(audio_file),
+                    "s3_key": s3_key if Config.USE_S3 else None,
+                    "generation_text": text,
+                    "voice_id": voice,
+                    "cached": True
+                }
+
+            logging.info(f"Generating NEW ElevenLabs audio for voice {voice}...")
             
             # Call ElevenLabs API
             def _generate():
@@ -591,18 +858,132 @@ class VideoGenerator:
             
             if audio_file.exists():
                 duration = self._get_audio_duration(audio_file)
+                
+                # Upload to S3
+                if Config.USE_S3:
+                    Config.s3.upload_file(audio_file, s3_key)
+
                 return {
-                    "url": f"/storage/audio/{audio_id}.mp3",
+                    "url": Config.s3.get_url(s3_key) if Config.USE_S3 else f"/storage/audio/{filename}",
                     "duration": duration,
-                    "path": str(audio_file)
+                    "path": str(audio_file),
+                    "s3_key": s3_key if Config.USE_S3 else None,
+                    "generation_text": text,
+                    "voice_id": voice,
+                    "cached": False
                 }
             
             return {"url": "", "duration": 5.0, "path": ""}
 
         except Exception as e:
+            error_msg = str(e).lower()
+            if any(k in error_msg for k in ["quota", "credit", "insufficient"]):
+                logging.error(f"CRITICAL: ElevenLabs Quota Exceeded: {e}")
+                return {"url": "", "duration": 5.0, "path": "", "error_code": "QUOTA_EXCEEDED"}
+            
             logging.error(f"ElevenLabs audio generation error: {e}")
             return {"url": "", "duration": 5.0, "path": ""}
     
+    async def _create_silent_audio(self, duration: float) -> Dict:
+        """Create a silent audio file for the specified duration"""
+        try:
+            audio_id = f"silent_{uuid.uuid4().hex[:8]}"
+            audio_file = Config.STORAGE_DIR / "temp" / f"{audio_id}.mp3"
+            audio_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Use ffmpeg to generate silence
+            cmd = [
+                Config.get_ffmpeg(),
+                "-f", "lavfi",
+                "-i", f"anullsrc=r=44100:cl=stereo",
+                "-t", str(duration),
+                "-ar", "44100",
+                "-ac", "2",
+                "-acodec", "libmp3lame",
+                "-y",
+                str(audio_file)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0 and audio_file.exists():
+                return {
+                    "url": f"/storage/temp/{audio_id}.mp3",
+                    "duration": duration,
+                    "path": str(audio_file)
+                }
+            
+            return {"url": "", "duration": duration, "path": ""}
+        except Exception as e:
+            logging.error(f"Silent audio creation failed: {e}")
+            return {"url": "", "duration": duration, "path": ""}
+
+    def _load_projects(self) -> Dict[str, Any]:
+        """Load projects from JSON file and discover orphan videos"""
+        projects = {}
+        if Config.PROJECTS_FILE.exists():
+            try:
+                with open(Config.PROJECTS_FILE, 'r', encoding='utf-8') as f:
+                    projects = json.load(f)
+            except Exception as e:
+                logging.error(f"Failed to load projects: {e}")
+        
+        # Discover orphan videos that aren't in the JSON
+        self._discover_legacy_videos(projects)
+        return projects
+
+    def _discover_legacy_videos(self, projects: Dict[str, Any]):
+        """Scan storage/videos and add orphans to projects as 'legacy' entries"""
+        videos_dir = Config.STORAGE_DIR / "videos"
+        if not videos_dir.exists():
+            return
+
+        # Get existing video URLs from projects
+        known_urls = {p.get("video_url") for p in projects.values() if p.get("video_url")}
+
+        for video_file in videos_dir.glob("*.mp4"):
+            video_url = f"/storage/videos/{video_file.name}"
+            if video_url not in known_urls:
+                # This is a legacy/orphan video
+                project_id = f"legacy_{video_file.stem}"
+                # Use file modification time as creation time
+                mtime = datetime.fromtimestamp(video_file.stat().st_mtime).isoformat()
+                
+                projects[project_id] = {
+                    "id": project_id,
+                    "title": f"Restored: {video_file.name}",
+                    "status": "completed",
+                    "progress": 100,
+                    "video_url": video_url,
+                    "created_at": mtime,
+                    "is_legacy": True
+                }
+                logging.info(f"Discovered legacy video: {video_file.name}")
+
+    def _save_projects(self):
+        """Save projects to JSON file"""
+        try:
+            logging.info(f"Attempting to save {len(self.projects)} projects to {Config.PROJECTS_FILE}")
+            # Ensure directory exists
+            Config.PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Use a temporary file for atomic write
+            temp_file = Config.PROJECTS_FILE.with_suffix(".tmp")
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(self.projects, f, indent=2, ensure_ascii=False)
+            
+            # Rename temp file to actual file
+            if os.path.exists(Config.PROJECTS_FILE):
+                os.replace(temp_file, Config.PROJECTS_FILE)
+            else:
+                os.rename(temp_file, Config.PROJECTS_FILE)
+                
+            logging.info(f"✓ Projects saved successfully to {Config.PROJECTS_FILE}")
+        except Exception as e:
+            logging.error(f"CRITICAL: Failed to save projects to {Config.PROJECTS_FILE}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get audio duration using ffprobe"""
         try:
@@ -622,6 +1003,23 @@ class VideoGenerator:
             words = len(str(audio_path).split()) if isinstance(audio_path, str) else 0
             return max(3.0, min(words * 0.15, 10.0))
     
+    def _format_visual_response(self, visual_file: Path, style: str, visual_id: str) -> Dict:
+        """Helper to format visual response and upload to S3 if needed"""
+        s3_key = f"visuals/{visual_file.name}"
+        if Config.USE_S3:
+            Config.s3.upload_file(visual_file, s3_key)
+            return {
+                "url": Config.s3.get_url(s3_key),
+                "path": str(visual_file),
+                "s3_key": s3_key,
+                "style": style
+            }
+        return {
+            "url": f"/storage/visuals/{visual_id}.png",
+            "path": str(visual_file),
+            "style": style
+        }
+
     async def generate_visual(self, prompt: str, style: str, scene_number: int, resolution: str = "1080x1920", custom_image_path: Optional[str] = None) -> Dict:
         """Generate visual with AI providers or fallback to PIL"""
         try:
@@ -634,11 +1032,7 @@ class VideoGenerator:
                 logging.info(f"Using custom image for scene {scene_number}: {custom_image_path}")
                 # Copy to visuals directory with a new name to avoid conflicts and ensure it's in the right place
                 shutil.copy2(custom_image_path, visual_file)
-                return {
-                    "url": f"/storage/visuals/{visual_id}.png",
-                    "path": str(visual_file),
-                    "style": "custom"
-                }
+                return self._format_visual_response(visual_file, "custom", visual_id)
 
             # Parse resolution for dimensions
             width, height = self._parse_resolution(resolution)
@@ -654,11 +1048,7 @@ class VideoGenerator:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
                             logging.info(f"✓ Found visual via Pexels (Style Priority): {visual_file}")
-                            return {
-                                "url": f"/storage/visuals/{visual_id}.png",
-                                "path": str(visual_file),
-                                "style": style
-                            }
+                            return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as pe:
                     logging.warning(f"Pexels search failed (Style Priority): {pe}")
 
@@ -673,11 +1063,7 @@ class VideoGenerator:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
                             logging.info(f"✓ Generated visual via Replicate: {visual_file}")
-                            return {
-                                "url": f"/storage/visuals/{visual_id}.png",
-                                "path": str(visual_file),
-                                "style": style
-                            }
+                            return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as re:
                     logging.warning(f"Replicate generation failed: {re}")
 
@@ -690,11 +1076,7 @@ class VideoGenerator:
                         with open(visual_file, "wb") as f:
                             f.write(image_data)
                         logging.info(f"✓ Generated visual via Stability: {visual_file}")
-                        return {
-                            "url": f"/storage/visuals/{visual_id}.png",
-                            "path": str(visual_file),
-                            "style": style
-                        }
+                        return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as se:
                     logging.warning(f"Stability generation failed: {se}")
 
@@ -707,11 +1089,7 @@ class VideoGenerator:
                         with open(visual_file, "wb") as f:
                             f.write(image_data)
                         logging.info(f"✓ Generated visual via HuggingFace: {visual_file}")
-                        return {
-                            "url": f"/storage/visuals/{visual_id}.png",
-                            "path": str(visual_file),
-                            "style": style
-                        }
+                        return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as he:
                     logging.warning(f"HuggingFace generation failed: {he}")
 
@@ -726,11 +1104,7 @@ class VideoGenerator:
                             with open(visual_file, "wb") as f:
                                 f.write(response.content)
                             logging.info(f"✓ Found visual via Pexels: {visual_file}")
-                            return {
-                                "url": f"/storage/visuals/{visual_id}.png",
-                                "path": str(visual_file),
-                                "style": style
-                            }
+                            return self._format_visual_response(visual_file, style, visual_id)
                 except Exception as pe:
                     logging.warning(f"Pexels search failed: {pe}")
 
@@ -740,11 +1114,7 @@ class VideoGenerator:
             img = self._add_scene_number_to_image(img, scene_number, style)
             img.save(str(visual_file), "PNG", quality=95)
             
-            return {
-                "url": f"/storage/visuals/{visual_id}.png",
-                "path": str(visual_file),
-                "style": style
-            }
+            return self._format_visual_response(visual_file, style, visual_id)
             
         except Exception as e:
             logging.error(f"Visual generation failed completely: {e}")
@@ -1052,18 +1422,38 @@ class VideoGenerator:
             
             # Priority: Use PIL-based text overlay (Method 2) first, as it's more robust on Windows
             logging.info(f"Creating scene video for scene {scene['scene_number']}...")
-            # Subtitle should be narration.
-            subtitle_text = scene.get('voice_over', scene.get('text', ''))
+            # Subtitle should be the visual text (Visual Prompt).
+            subtitle_text = scene.get('text', scene.get('voice_over', ''))
             
+            # Determine final duration
+            # Priority:
+            # 1. Manual duration (if duration_is_auto is False/missing but value changed)
+            # 2. Actual audio duration (the safest for narration)
+            manual_duration = scene.get("duration")
+            is_auto = scene.get("duration_is_auto", False)
+            
+            # If it's auto-estimated, we prefer the actual audio duration to avoid cuts
+            # If the user changed it manually, we respect their choice
+            final_duration = audio_info["duration"] if is_auto else manual_duration
+            
+            logging.info(f"Duration logic: is_auto={is_auto}, manual={manual_duration}, audio={audio_info['duration']} -> final={final_duration}")
+
             scene_path = await self._create_scene_with_simple_text(
                 visual_info["path"], 
                 audio_info["path"], 
                 scene_file, 
-                audio_info["duration"],
-                subtitle_text,
+                final_duration,
+                subtitle_text if not scene.get("show_image_only", False) else "",
                 resolution,
                 language,
-                subtitle_style=subtitle_style
+                subtitle_style=subtitle_style,
+                subtitle_position=scene.get("subtitle_position", "bottom"),
+                subtitle_size=scene.get("subtitle_size", 60),
+                subtitle_color=scene.get("subtitle_color", "white"),
+                subtitle_bg_visible=scene.get("subtitle_bg_visible", True),
+                subtitle_bold=scene.get("subtitle_bold", False),
+                rotation=scene.get("rotation", 0),
+                line_styles=scene.get("line_styles", [])
             )
             
             if scene_path:
@@ -1117,7 +1507,14 @@ class VideoGenerator:
     async def _create_scene_with_simple_text(self, image_path: str, audio_path: str, 
                                            output_path: Path, duration: float, 
                                            text: str, resolution: str = "1080x1920", language: str = "en",
-                                           subtitle_style: str = "static") -> Optional[str]:
+                                           subtitle_style: str = "static", 
+                                           subtitle_position: str = "bottom",
+                                           subtitle_size: int = 60,
+                                           subtitle_color: str = "white",
+                                           subtitle_bg_visible: bool = True,
+                                           subtitle_bold: bool = False,
+                                           rotation: int = 0,
+                                           line_styles: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """Create scene video with proper complex script handling
         
         CRITICAL PIPELINE CHANGE:
@@ -1135,12 +1532,43 @@ class VideoGenerator:
             if language not in renderer.COMPLEX_SCRIPTS and subtitle_style == "static":
                 # FAST PATH: Use PIL for simple scripts (English, etc.) without animation
                 return await self._create_scene_with_pil_fallback(
-                    image_path, audio_path, output_path, duration, text, resolution, language
+                    image_path, audio_path, output_path, duration, text, resolution, language,
+                    subtitle_position=subtitle_position,
+                    subtitle_size=subtitle_size,
+                    subtitle_color=subtitle_color,
+                    subtitle_bg_visible=subtitle_bg_visible,
+                    subtitle_bold=subtitle_bold,
+                    rotation=rotation,
+                    line_styles=line_styles
                 )
             
             # === COMPLEX SCRIPT PIPELINE (ASS/LIBASS) ===
             logging.info(f"Entering Complex Script Pipeline (LIBASS) for {language}")
             
+            return await self._create_scene_with_complex_script(
+                image_path, audio_path, output_path, duration, text, 
+                resolution, language, subtitle_style, subtitle_position, 
+                subtitle_size, subtitle_color, subtitle_bg_visible, subtitle_bold, rotation,
+                line_styles=line_styles
+            )
+        except Exception as e:
+            logging.error(f"Error in simple text creation: {e}")
+            return None
+
+    async def _create_scene_with_complex_script(self, image_path: str, audio_path: str, 
+                                              output_path: Path, duration: float, 
+                                              text: str, resolution: str = "1080x1920", language: str = "en",
+                                              subtitle_style: str = "static",
+                                              subtitle_position: str = "bottom",
+                                              subtitle_size: int = 60,
+                                              subtitle_color: str = "white",
+                                              subtitle_bg_visible: bool = True,
+                                              subtitle_bold: bool = False,
+                                              rotation: int = 0,
+                                              line_styles: Optional[List[Dict[str, Any]]] = None) -> str:
+        """Create scene video using LIBASS/ASS pipeline for complex scripts"""
+        try:
+            renderer = self.complex_script_renderer
             # 1. Find Font
             font_path = renderer.find_font(language)
             if not font_path:
@@ -1150,7 +1578,7 @@ class VideoGenerator:
             
             # 2. Wrap Text
             max_width_lines = 3000  # Set high to let Libass handle accurate wrapping via margins
-            font_size = 60  # Increased font size for readability
+            font_size = subtitle_size  # Use customized font size
             
             # --- DYNAMIC POSITIONING ---
             try:
@@ -1174,7 +1602,11 @@ class VideoGenerator:
                 
                 bottom_bar_height = (vid_h - scaled_h) // 2
                 inner_margin = 80  # Padding inside the image
-                margin_v = bottom_bar_height + inner_margin
+                
+                if subtitle_position == 'center':
+                    margin_v = vid_h // 2
+                else: # bottom
+                    margin_v = bottom_bar_height + inner_margin
                 
                 logging.info(f"Layout Calc: VidH={vid_h}, ImgH={scaled_h}, BottomBar={bottom_bar_height}, MarginV={margin_v}")
             except Exception as e:
@@ -1191,15 +1623,19 @@ class VideoGenerator:
             ass_file_path.parent.mkdir(parents=True, exist_ok=True)
             
             renderer.generate_ass_file(
-                wrapped_text,
+                text,
                 ass_file_path,
                 font_path,
-                font_size,
-                duration,
-                resolution,
-                language,
+                font_size=font_size,
+                duration=duration,
+                resolution=resolution,
+                language=language,
                 margin_v=margin_v,
-                style=subtitle_style
+                style=subtitle_position if subtitle_style == "static" else subtitle_style,
+                color=subtitle_color,
+                bg_visible=subtitle_bg_visible,
+                bold=subtitle_bold,
+                line_styles=line_styles
             )
             
             # 4. Generate Clean Video (Image + Audio) - Intermediate
@@ -1210,12 +1646,18 @@ class VideoGenerator:
             cmd_base = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
+                "-r", "30",
                 "-i", image_path,
                 "-i", audio_path,
                 "-c:v", "libx264",
+                "-r", "30",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-pix_fmt", "yuv420p",
-                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-vf", f"rotate={rotation}*PI/180:ow='max(iw,ih)':oh='max(iw,ih)',"
+                       f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-af", f"atrim=0:{duration},apad=whole_dur={duration}",
                 "-t", str(duration),
                 "-shortest",
                 "-y",
@@ -1258,7 +1700,14 @@ class VideoGenerator:
     
     async def _create_scene_with_pil_fallback(self, image_path: str, audio_path: str, 
                                             output_path: Path, duration: float, 
-                                            text: str, resolution: str = "1080x1920", language: str = "en") -> Optional[str]:
+                                            text: str, resolution: str = "1080x1920", language: str = "en",
+                                            subtitle_position: str = "bottom",
+                                            subtitle_size: int = 60,
+                                            subtitle_color: str = "white",
+                                            subtitle_bg_visible: bool = True,
+                                            subtitle_bold: bool = False,
+                                            rotation: int = 0,
+                                            line_styles: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """Fallback PIL-based text rendering for simple scripts ONLY
         
         WARNING: Complex scripts (Tamil, Hindi, etc.) MUST NOT use PIL rendering.
@@ -1341,56 +1790,110 @@ class VideoGenerator:
                 else:
                     fitting = False
             
-            # Draw text with background
-            bbox_sample = draw.textbbox((0, 0), "Ayg", font=font)
-            line_height = (bbox_sample[3] - bbox_sample[1]) + 15
-            total_height = len(lines) * line_height
+            # === STYLING & RENDERING ===
+            color_map = {
+                'white': (255, 255, 255), 'yellow': (255, 255, 0), 'cyan': (0, 255, 255),
+                'green': (0, 255, 0), 'red': (255, 0, 0), 'orange': (255, 165, 0),
+                'blue': (0, 0, 255), 'pink': (255, 192, 203), 'purple': (128, 0, 128),
+                'black': (0, 0, 0)
+            }
+
+            def get_font_for_line(size, is_bold):
+                f_path = font_path
+                if is_bold:
+                    if os.name == 'nt':
+                        font_path_bold = "C:/Windows/Fonts/arialbd.ttf"
+                        if os.path.exists(font_path_bold): f_path = font_path_bold
+                    else:
+                        font_path_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                        if os.path.exists(font_path_bold): f_path = font_path_bold
+                try:
+                    return ImageFont.truetype(f_path, size)
+                except:
+                    return ImageFont.load_default()
+
+            if line_styles:
+                lines = text.split('\n')
             
-            y_start = img.height - total_height - (img.height * 0.15)
-            
-            # Draw semi-transparent background
+            prepared_lines = []
+            total_height = 0
             padding = 15
-            box_fill = (0, 0, 0, 160)
+            l_styles = line_styles or []
+
+            for i, line_text in enumerate(lines):
+                line_text = line_text.strip()
+                if not line_text:
+                    total_height += int(subtitle_size * 1.2)
+                    prepared_lines.append(None)
+                    continue
+                
+                l_style = l_styles[i] if i < len(l_styles) else {}
+                l_size = l_style.get('subtitle_size', subtitle_size)
+                l_bold = l_style.get('subtitle_bold', subtitle_bold)
+                l_font = get_font_for_line(l_size, l_bold)
+                
+                l_bbox = draw.textbbox((0, 0), line_text, font=l_font)
+                l_w = l_bbox[2] - l_bbox[0]
+                l_h = (l_bbox[3] - l_bbox[1]) + 15
+                
+                prepared_lines.append({
+                    'text': line_text,
+                    'font': l_font,
+                    'color': color_map.get((l_style.get('subtitle_color') or subtitle_color).lower(), (255, 255, 255)),
+                    'bg_visible': l_style.get('subtitle_bg_visible', subtitle_bg_visible),
+                    'width': l_w,
+                    'height': l_h
+                })
+                total_height += l_h
+
+            if subtitle_position == 'center':
+                y_start = (img.height - total_height) // 2
+            else: # bottom
+                y_start = img.height - total_height - (img.height * 0.15)
+            
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
             overlay_draw = ImageDraw.Draw(overlay)
+            box_fill = (0, 0, 0, 160)
             
-            for i, line in enumerate(lines):
-                line_bbox = overlay_draw.textbbox((0, 0), line, font=font)
-                line_w = line_bbox[2] - line_bbox[0]
-                line_h = line_bbox[3] - line_bbox[1]
-                lx = (img.width - line_w) // 2
-                ly = y_start + (i * line_height)
-                
-                overlay_draw.rectangle(
-                    [(lx - padding, ly - 5), 
-                     (lx + line_w + padding, ly + line_h + 10)],
-                    fill=box_fill
-                )
+            current_y = y_start
+            for l_data in prepared_lines:
+                if l_data is None:
+                    current_y += int(subtitle_size * 1.2)
+                    continue
+                lx = (img.width - l_data['width']) // 2
+                if l_data['bg_visible']:
+                    overlay_draw.rectangle(
+                        [lx - padding, current_y, lx + l_data['width'] + padding, current_y + l_data['height']],
+                        fill=box_fill
+                    )
+                overlay_draw.text((lx, current_y), l_data['text'], font=l_data['font'], fill=l_data['color'])
+                current_y += l_data['height']
             
-            img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
-            draw = ImageDraw.Draw(img)
+            # Rotation (Apply to both)
+            if rotation != 0:
+                img = img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+                overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
             
-            # Draw each line centered
-            for i, line in enumerate(lines):
-                bbox = draw.textbbox((0, 0), line, font=font)
-                w = bbox[2] - bbox[0]
-                x = (img.width - w) // 2
-                y = y_start + (i * line_height)
-                draw.text((x, y), line, font=font, fill='white')
-            
+            img = img.convert('RGBA')
+            img = Image.alpha_composite(img, overlay).convert('RGB')
             img.save(str(temp_image), "PNG", quality=95)
             
             # Now create video with this image
             cmd = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
+                "-r", "30",
                 "-i", str(temp_image),
                 "-i", audio_path,
                 "-c:v", "libx264",
+                "-r", "30",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-af", f"atrim=0:{duration},apad=whole_dur={duration}",
                 "-t", str(duration),
                 "-shortest",
                 "-y",
@@ -1431,12 +1934,16 @@ class VideoGenerator:
             cmd = [
                 Config.get_ffmpeg(),
                 "-loop", "1",
+                "-r", "30",
                 "-i", str(image_path),
                 "-i", str(audio_path),
                 "-c:v", "libx264",
+                "-r", "30",
                 "-preset", "fast",
                 "-crf", "23",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-vf", f"scale={resolution.replace('x', ':')}:force_original_aspect_ratio=decrease,pad={resolution.replace('x', ':')}:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -1623,10 +2130,64 @@ class VideoGenerator:
                 project["status_message"] = f"Generating scene {i+1}/{total_scenes}..."
                 
                 # Generate audio
-                # Use voice_over if available, otherwise fallback to text
-                voice_text = scene.get("voice_over", scene["text"])
-                audio_info = await self.generate_audio(voice_text, request.language, request.voice)
-                if not audio_info["path"]:
+                # Priority:
+                # 1. Custom uploaded audio
+                # 2. AI Generated voice_over
+                # 3. Silent audio
+                custom_audio_path = scene.get("custom_audio_path")
+                show_image_only = scene.get("show_image_only", False)
+                
+                if custom_audio_path and os.path.exists(custom_audio_path):
+                    logging.info(f"Using custom audio for scene {i+1}: {custom_audio_path}")
+                    duration = self._get_audio_duration(Path(custom_audio_path))
+                    audio_info = {
+                        "path": custom_audio_path,
+                        "duration": duration,
+                        "url": scene.get("custom_audio_url", "")
+                    }
+                elif not show_image_only and scene.get("voice_over", scene.get("text")):
+                    voice_text = scene.get("voice_over", scene["text"])
+                    
+                    # CACHING LOGIC: Skip AI call if text/voice is unchanged and file exists
+                    existing_audio = scene.get("audio_info")
+                    is_local_reuse = (
+                        existing_audio and 
+                        existing_audio.get("path") and 
+                        os.path.exists(existing_audio["path"]) and
+                        existing_audio.get("generation_text") == voice_text and
+                        existing_audio.get("voice_id") == request.voice
+                    )
+                    
+                    if is_local_reuse:
+                        logging.info(f"Credit Saver: Fast-reusing local audio for scene {i+1}")
+                        audio_info = existing_audio
+                        project["status_message"] = f"Reusing local audio for scene {i+1}/{total_scenes} (Credit saved!)"
+                    else:
+                        # Even if local file is missing, generate_audio will check S3 cache
+                        logging.info(f"Checking cache/generating audio for scene {i+1}")
+                        project["status_message"] = f"Preparing audio for scene {i+1}/{total_scenes}..."
+                        audio_info = await self.generate_audio(voice_text, request.language, request.voice)
+                        
+                        if audio_info.get("cached"):
+                            project["status_message"] = f"Audio cache hit for scene {i+1}/{total_scenes} (Credit saved!)"
+                        else:
+                            project["status_message"] = f"Generated new audio for scene {i+1}/{total_scenes}"
+                        
+                        if audio_info.get("error_code") == "QUOTA_EXCEEDED":
+                            raise VideoPipelineError(
+                                "ElevenLabs Credits Exhausted",
+                                code="ELEVENLABS_QUOTA",
+                                details="Your account has run out of credits. Please top up your ElevenLabs account.",
+                                action="UPGRADE_PLAN"
+                            )
+                        
+                        if audio_info.get("path"):
+                            scene["audio_info"] = audio_info
+                else:
+                    # Create silent audio for the specified duration
+                    audio_info = await self._create_silent_audio(scene.get("duration", 5.0))
+                
+                if not audio_info.get("path"):
                     logging.error(f"Failed to generate audio for scene {i+1}")
                     continue
                 
@@ -1665,23 +2226,30 @@ class VideoGenerator:
             # Determine if we should use demuxer (for complex scripts with ASS subtitles)
             use_demuxer = request.language in ComplexScriptRenderer.COMPLEX_SCRIPTS
             
-            video_url = await self._concatenate_videos(scene_videos, request.resolution, use_demuxer=use_demuxer)
+            video_url, video_s3_key = await self._concatenate_videos(scene_videos, request.resolution, use_demuxer=use_demuxer)
             
             # Update project
             project["progress"] = 100
             project["status"] = "completed" if video_url else "failed"
             project["video_url"] = video_url
+            project["video_s3_key"] = video_s3_key
             project["completed_at"] = datetime.now().isoformat()
             
+            self._save_projects()
+            
             if video_url:
-                video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
-                if video_path.exists():
-                    file_size = video_path.stat().st_size
-                    project["status_message"] = f"Video created successfully ({file_size/1024/1024:.1f} MB)"
-                    logging.info(f"Final video created: {video_path} ({file_size} bytes)")
+                if video_url.startswith('http'):
+                    project["status_message"] = "Video created successfully and stored in cloud"
+                    logging.info(f"Final video created and uploaded to S3: {video_url}")
                 else:
-                    project["status_message"] = "Video created but file not found"
-                    project["status"] = "failed"
+                    video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
+                    if video_path.exists():
+                        file_size = video_path.stat().st_size
+                        project["status_message"] = f"Video created successfully ({file_size/1024/1024:.1f} MB)"
+                        logging.info(f"Final video created: {video_path} ({file_size} bytes)")
+                    else:
+                        project["status_message"] = "Video created but local file not found"
+                        project["status"] = "failed"
             else:
                 project["status_message"] = "Failed to create video"
                 project["status"] = "failed"
@@ -1731,20 +2299,24 @@ class VideoGenerator:
                 raise VideoConcatenationError("No valid videos to concatenate after filtering")
             
             if use_demuxer:
-                logging.info(f"Using Concat Demuxer (Preferred) for {len(valid_videos)} videos...")
-                try:
-                    return await self._concatenate_with_demuxer(valid_videos, video_id)
-                except Exception as e:
-                    logging.warning(f"Concat demuxer failed: {e}. Falling back to filter complex...")
-                    return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+                logging.info(f"Using Concat Demuxer for {len(valid_videos)} videos (ASS Subtitles)...")
+                video_file_path = await self._concatenate_with_demuxer(valid_videos, video_id)
             else:
-                logging.info(f"Using Filter Complex (Standard) for {len(valid_videos)} videos...")
-                try:
-                    return await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
-                except Exception as e:
-                    logging.warning(f"Filter complex failed (likely code 4294967274). Error: {e}")
-                    logging.info("Falling back to Concat Demuxer...")
-                    return await self._concatenate_with_demuxer(valid_videos, video_id)
+                logging.info(f"Using Filter Complex for {len(valid_videos)} videos (Standard)...")
+                video_file_path = await self._concatenate_with_filter_complex(valid_videos, video_id, resolution)
+            
+            if video_file_path:
+                output_path = Path(video_file_path)
+                s3_key = f"videos/{output_path.name}"
+                if Config.USE_S3:
+                    if Config.s3.upload_file(output_path, s3_key):
+                        logging.info(f"✓ Video successfully persistent in S3: {s3_key}")
+                        return Config.s3.get_url(s3_key), s3_key
+                    else:
+                        logging.error(f"Failed to upload video to S3: {s3_key}. Using local fallback.")
+                        return f"/storage/videos/{output_path.name}", None
+                return f"/storage/videos/{output_path.name}", None
+            return None, None
                 
         except Exception as e:
             if isinstance(e, VideoPipelineError): raise e
@@ -1789,7 +2361,7 @@ class VideoGenerator:
                 file_size = output_file.stat().st_size
                 if file_size > 1024:
                     logging.info(f"✓ Demuxer Concatenation successful. Size: {file_size} bytes")
-                    return f"/storage/videos/{video_id}.mp4"
+                    return str(output_file)
                 else:
                     raise VideoConcatenationError("Concatenation produced empty video file", f"Size: {file_size} bytes")
             else:
@@ -1811,20 +2383,30 @@ class VideoGenerator:
             for video in video_files:
                 cmd.extend(["-i", video])
             
-            # Build filter complex
+            # Build filter complex with stream normalization
             filter_parts = []
             for i in range(len(video_files)):
-                filter_parts.append(f"[{i}:v]")
-                filter_parts.append(f"[{i}:a]")
+                # Normalize each stream: constant frame rate and constant sample rate
+                filter_parts.append(f"[{i}:v]fps=30,format=yuv420p[v{i}];")
+                filter_parts.append(f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{i}];")
             
-            filter_complex = "".join(filter_parts) + f"concat=n={len(video_files)}:v=1:a=1[outv][outa]"
+            # Concatenate normalized streams
+            concat_inputs = ""
+            for i in range(len(video_files)):
+                concat_inputs += f"[v{i}][a{i}]"
+            
+            concat_filter = f"{concat_inputs}concat=n={len(video_files)}:v=1:a=1[outv][outa]"
+            filter_complex = "".join(filter_parts) + concat_filter
             
             cmd.extend([
                 "-filter_complex", filter_complex,
                 "-map", "[outv]",
                 "-map", "[outa]",
                 "-c:v", "libx264",
+                "-r", "30",
                 "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
                 "-movflags", "+faststart",
                 "-y",
                 str(output_file)
@@ -1837,7 +2419,7 @@ class VideoGenerator:
                 file_size = output_file.stat().st_size
                 if file_size > 1024:
                     logging.info(f"✓ Concatenation successful. Size: {file_size} bytes")
-                    return f"/storage/videos/{video_id}.mp4"
+                    return str(output_file)
                 else:
                     raise FFmpegError("Concatenation produced empty video file", f"Size: {file_size} bytes")
             else:
@@ -1941,51 +2523,66 @@ async def get_config():
 
 @app.post("/api/videos/create")
 async def create_video(request: VideoCreateRequest, background_tasks: BackgroundTasks):
-    """Create a video from script"""
-    try:
-        # Validate voice exists
-        valid_voices = [v["id"] for v in video_gen.get_voices()]
-        if request.voice not in valid_voices:
-            raise HTTPException(status_code=400, detail=f"Invalid voice. Must be one of: {valid_voices}")
-        
-        # Validate image style exists
-        valid_styles = [s["id"] for s in video_gen.get_image_styles()]
-        if request.image_style not in valid_styles:
-            raise HTTPException(status_code=400, detail=f"Invalid image style. Must be one of: {valid_styles}")
-        
-        project_id = f"project_{uuid.uuid4().hex[:8]}"
-        
-        # Store project
-        video_gen.projects[project_id] = {
-            "project_id": project_id,
-            "title": request.title,
-            "status": "processing",
-            "progress": 0,
-            "status_message": "Starting video creation...",
-            "created_at": datetime.now().isoformat(),
-            "video_url": None,
-            "error": None,
-            "script": request.script[:200] + "..." if len(request.script) > 200 else request.script,
-            "voice": request.voice,
-            "image_style": request.image_style
-        }
-        video_gen.save_projects()
-        
-        # Start processing in background
-        background_tasks.add_task(video_gen.create_video, project_id, request)
-        
-        return {
-            "success": True,
-            "data": {
-                "project_id": project_id,
-                "status": "processing",
-                "check_status": f"/api/projects/{project_id}/status"
-            }
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    project_id = str(uuid.uuid4())
+    
+    # Track the full request data for re-editing
+    video_gen.projects[project_id] = {
+        "id": project_id,
+        "title": request.title,
+        "status": "processing",
+        "progress": 0,
+        "video_url": None,
+        "created_at": datetime.now().isoformat(),
+        "request_data": request.model_dump()
+    }
+    
+    video_gen._save_projects()
+    background_tasks.add_task(video_gen.create_video, project_id, request)
+    return {"success": True, "data": {"project_id": project_id}}
 
+@app.get("/api/projects")
+async def get_projects():
+    """List all projects sorted by date"""
+    try:
+        # Convert dict to list items suitable for front-end preview
+        history = []
+        for pid, p in video_gen.projects.items():
+            video_url = p.get("video_url")
+            s3_key = p.get("video_s3_key")
+            
+            # Refresh presigned URL if it's an S3 video
+            if Config.USE_S3 and s3_key:
+                video_url = Config.s3.get_url(s3_key)
+                
+            history.append({
+                "id": pid,
+                "title": p.get("title", "Untitled"),
+                "status": p.get("status", "unknown"),
+                "created_at": p.get("created_at"),
+                "video_url": video_url,
+                "progress": p.get("progress", 0)
+            })
+        
+        # Sort by date descending
+        history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return {"success": True, "data": history}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/projects/{project_id}")
+async def get_project_details(project_id: str):
+    """Get full details of a specific project for re-editing"""
+    project = video_gen.projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    # Refresh presigned URL
+    s3_key = project.get("video_s3_key")
+    if Config.USE_S3 and s3_key:
+        project["video_url"] = Config.s3.get_url(s3_key)
+        
+    return {"success": True, "data": project}
+        
 @app.get("/api/projects/{project_id}/status")
 async def get_project_status(project_id: str):
     """Get project status"""
@@ -1993,12 +2590,128 @@ async def get_project_status(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
+    # Refresh presigned URL
+    s3_key = project.get("video_s3_key")
+    if Config.USE_S3 and s3_key:
+        project["video_url"] = Config.s3.get_url(s3_key)
+        
     return {
         "success": True,
         "data": project
     }
 
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project and its associated video file"""
+    try:
+        project = video_gen.projects.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Delete physical video file if it exists
+        video_url = project.get("video_url")
+        if video_url:
+            if "amazonaws.com" in video_url:
+                # S3 URL: Extract key
+                # Format: https://bucket.s3.region.amazonaws.com/videos/filename.mp4
+                try:
+                    # Extract everything after the hostname
+                    s3_key = video_url.split(".com/")[-1]
+                    Config.s3.delete_file(s3_key)
+                except Exception as e:
+                    logging.warning(f"Could not parse S3 URL {video_url} for deletion: {e}")
+            else:
+                # Local storage
+                video_path = Config.STORAGE_DIR / video_url.replace('/storage/', '')
+                if video_path.exists():
+                    try:
+                        video_path.unlink()
+                        logging.info(f"Deleted local video file: {video_path}")
+                    except Exception as e:
+                        logging.warning(f"Could not delete local video file {video_path}: {e}")
+        
+        # Remove from projects dict
+        del video_gen.projects[project_id]
+        video_gen._save_projects()
+        
+        return {"success": True, "message": "Project deleted successfully"}
+    except Exception as e:
+        logging.error(f"Failed to delete project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Update the preview endpoints to return proper data
+@app.post("/api/audio/set-default")
+async def set_audio_default(request: Dict[str, Any]):
+    """Promote a generated audio file to a system-wide default"""
+    try:
+        path = request.get("path")
+        audio_type = request.get("type") # 'intro' or 'outro'
+        
+        if not path:
+            raise UserInputError("Path is required")
+            
+        # If it's an S3 key, we might need to download it for metadata calculation
+        # but path should be local according to our VideoGenerator refactor
+        if not os.path.exists(path):
+            if Config.USE_S3 and Config.s3.exists(path):
+                # Download to temp
+                temp_p = Config.STORAGE_DIR / "temp" / Path(path).name
+                Config.s3.download_file(path, temp_p)
+                path = str(temp_p)
+            else:
+                raise UserInputError(f"Audio file not found: {path}")
+            
+        if audio_type not in ["intro", "outro"]:
+            raise UserInputError("Type must be 'intro' or 'outro'")
+            
+        dest_filename = f"default_{audio_type}.mp3"
+        dest_path = Config.STORAGE_DIR / "system_defaults" / dest_filename
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Copy file to system defaults locally
+        shutil.copy2(path, dest_path)
+        
+        # Calculate duration
+        duration = video_gen._get_audio_duration(Path(path))
+        
+        # S3 Persistence
+        s3_key = f"system_defaults/{dest_filename}"
+        s3_meta_key = f"system_defaults/default_{audio_type}.json"
+        
+        url = f"/storage/system_defaults/{dest_filename}"
+        if Config.USE_S3:
+            Config.s3.upload_file(dest_path, s3_key)
+            url = Config.s3.get_url(s3_key)
+        
+        # Save metadata JSON
+        meta_data = {
+            "path": s3_key if Config.USE_S3 else str(dest_path),
+            "url": url,
+            "duration": duration,
+            "text": request.get("text", ""),
+            "type": audio_type,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        meta_path = dest_path.with_suffix(".json")
+        with open(meta_path, "w") as f:
+            json.dump(meta_data, f)
+            
+        if Config.USE_S3:
+            Config.s3.upload_file(meta_path, s3_meta_key)
+            
+        return {
+            "success": True,
+            "message": f"Successfully set system default {audio_type}",
+            "data": {
+                "url": url,
+                "duration": duration
+            }
+        }
+    except Exception as e:
+        logging.error(f"Failed to set audio default: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/visuals/preview")
 async def preview_visual(
     text: str = Form(...),
@@ -2086,6 +2799,8 @@ async def preview_audio(request: Dict[str, Any]):
             "success": True,
             "data": {
                 "url": audio_info["url"],
+                "path": audio_info["path"],
+                "duration": audio_info["duration"],
                 "text": text[:100] + "..." if len(text) > 100 else text
             }
         }
@@ -2102,6 +2817,14 @@ async def test_text_overlay():
 async def download_video(video_filename: str):
     """Download generated video"""
     video_path = Config.STORAGE_DIR / "videos" / video_filename
+    
+    # If not found locally, try to download from S3
+    if not video_path.exists():
+        s3_key = f"videos/{video_filename}"
+        if Config.USE_S3 and Config.s3.exists(s3_key):
+            logging.info(f"Downloading {video_filename} from S3 for local download request")
+            Config.s3.download_file(s3_key, video_path)
+        
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
     
@@ -2110,6 +2833,50 @@ async def download_video(video_filename: str):
         filename=video_filename,
         media_type='video/mp4'
     )
+
+@app.post("/api/upload/scene-audio")
+async def upload_scene_audio(file: UploadFile = File(...)):
+    """Upload a custom audio file for a scene"""
+    try:
+        # Create audio directory if it doesn't exist
+        audio_dir = Config.STORAGE_DIR / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate a unique filename
+        file_extension = Path(file.filename).suffix
+        if not file_extension:
+            file_extension = ".mp3"
+        
+        filename = f"custom_voice_{uuid.uuid4().hex[:8]}{file_extension}"
+        file_path = audio_dir / filename
+        
+        # Save the file
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        
+        # Get duration
+        duration = video_gen._get_audio_duration(file_path)
+        
+        # S3 Support
+        s3_key = f"audio/{filename}"
+        url = f"/storage/audio/{filename}"
+        if Config.USE_S3:
+            Config.s3.upload_file(file_path, s3_key)
+            url = Config.s3.get_url(s3_key)
+
+        return {
+            "success": True,
+            "data": {
+                "url": url,
+                "path": str(file_path),
+                "s3_key": s3_key if Config.USE_S3 else None,
+                "duration": duration
+            }
+        }
+    except Exception as e:
+        logging.error(f"Failed to upload scene audio: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/upload/scene-image")
 async def upload_scene_image(file: UploadFile = File(...)):
@@ -2131,12 +2898,20 @@ async def upload_scene_image(file: UploadFile = File(...)):
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
-        
+            
+        # S3 Support
+        s3_key = f"visuals/{filename}"
+        url = f"/storage/visuals/{filename}"
+        if Config.USE_S3:
+            Config.s3.upload_file(file_path, s3_key)
+            url = Config.s3.get_url(s3_key)
+
         return {
             "success": True,
             "data": {
-                "url": f"/storage/visuals/{filename}",
-                "path": str(file_path)
+                "url": url,
+                "path": str(file_path),
+                "s3_key": s3_key if Config.USE_S3 else None
             }
         }
     except Exception as e:
@@ -2587,4 +3362,15 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"🎬 FACELESS VIDEOS BACKEND running on port {port}")
     print("=" * 50)
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    print(f"Server starting on: http://localhost:{port}")
+    print(f"API Documentation: http://localhost:{port}/docs")
+    print(f"Storage directory: {Config.STORAGE_DIR}")
+    print("\nFeatures:")
+    print("• Single script input - auto-split into scenes")
+    print("• 10 Different Voices with audio generation")
+    print("• Pexels realistic image style")
+    print("• Video with audio, images, and text overlay")
+    print("• Multiple languages support")
+    print("=" * 50)
+    
+    uvicorn.run("main:app", host="127.0.0.1", port=port, reload=True)
