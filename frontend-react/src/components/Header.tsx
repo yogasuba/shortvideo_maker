@@ -9,10 +9,12 @@ interface HeaderProps {
   setView: (view: ViewType) => void;
   isCalendarView: boolean;
   isIntegrationsView: boolean;
+  isHistoryView: boolean;
+  isCreatorView: boolean;
   showHistory: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView, isIntegrationsView,showHistory }) => {
+const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView, isIntegrationsView, isHistoryView, isCreatorView, showHistory }) => {
   return (
     <div className="header">
       <div className="container-custom">
@@ -23,7 +25,7 @@ const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, se
           </div>
           <div className="flex items-center gap-2">
             <button 
-              className={`btn ${!isCalendarView ? 'btn-primary-custom' : 'btn-outline-primary'} flex items-center`} 
+              className={`btn ${isCreatorView ? 'btn-primary-custom' : 'btn-outline-primary'} flex items-center`} 
               onClick={() => {
                 resetForm();
                 setView('creator');
@@ -31,7 +33,7 @@ const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, se
             >
               <RotateCcw className="w-4 h-4 mr-1" /> New
             </button>
-             <button className="btn btn-outline-primary mr-2 flex items-center" onClick={showHistory}>
+             <button className={`btn ${isHistoryView ? 'btn-primary-custom' : 'btn-outline-primary'} mr-2 flex items-center`} onClick={showHistory}>
               <Clock className="w-4 h-4 mr-1" /> History
             </button>
             <button 

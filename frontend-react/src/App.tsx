@@ -369,7 +369,12 @@ function App(): React.JSX.Element {
         setView={setView}
         isCalendarView={view === 'calendar'}
         isIntegrationsView={view === 'integrations'}
-        showHistory={() => setCurrentStep(0)}
+        isHistoryView={view === 'creator' && currentStep === 0}
+        isCreatorView={view === 'creator' && currentStep !== 0}
+        showHistory={() => {
+          setView('creator');
+          setCurrentStep(0);
+        }}
       />
       
       <div className="container-custom">
