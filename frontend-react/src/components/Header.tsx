@@ -9,7 +9,7 @@ interface HeaderProps {
   setView: (view: ViewType) => void;
   isCalendarView: boolean;
   isIntegrationsView: boolean;
-  showHistory :boolean;
+  showHistory: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ resetForm, toggleTheme, isDarkTheme, setView, isCalendarView, isIntegrationsView,showHistory }) => {

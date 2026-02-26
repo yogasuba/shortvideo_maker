@@ -1,3 +1,5 @@
+import React from 'react';
+
 // API Response Types
 export interface ApiResponse<T> {
   success: boolean;
@@ -8,18 +10,20 @@ export interface ApiResponse<T> {
 export interface ProjectStatus {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   progress: number;
+  status_message?: string;
   error?: {
     message: string;
   } | string;
   video_url?: string;
 }
 
+export type Integration = PostizIntegration;
+
 export interface ConfigData {
   languages?: string[];
   voices?: Array<{
     id: string;
     name: string;
-    language: string;
   }>;
   image_styles?: Array<{
     id: string;
@@ -32,10 +36,31 @@ export interface SceneData {
   scene_number: number;
   description: string;
   voiceover: string;
+  // Optional and extended fields
+  text?: string;
+  voice_over?: string;
+  visual_prompt?: string;
+  duration: number;
+  duration_is_auto?: boolean;
+  custom_audio_url?: string;
+  custom_audio_path?: string;
+  is_default?: boolean;
+  is_system_default?: boolean;
+  custom_image_url?: string;
+  custom_image_path?: string;
+  rotation?: number;
+  subtitle_position?: 'bottom' | 'center';
+  subtitle_size?: number;
+  subtitle_bg_visible?: boolean;
+  subtitle_color?: string;
+  subtitle_bold?: boolean;
+  show_image_only?: boolean;
+  line_styles?: Array<Record<string, any>>;
 }
 
 export interface ScenesPreview {
   scenes: SceneData[];
+  total_scenes?: number;
 }
 
 export interface Interaction {

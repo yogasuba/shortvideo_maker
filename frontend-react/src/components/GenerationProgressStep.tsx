@@ -15,6 +15,7 @@ interface GenerationProgressStepProps {
   orientation: OrientationType;
   resetForm: () => void;
   API_BASE: string;
+  onEdit: () => void;
   addAlert: (message: string, type: AlertType) => void;
 }
 

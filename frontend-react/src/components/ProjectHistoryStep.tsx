@@ -1,10 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Film, Pencil, Download, Loader2, AlertCircle, Trash2 } from 'lucide-react';
+import { ProjectStatus } from '../types';
 
-const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
-  const [history, setHistory] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+interface ProjectHistoryItem extends ProjectStatus {
+  id: string;
+  title: string;
+  created_at: string;
+  is_legacy?: boolean;
+}
+
+interface ProjectHistoryStepProps {
+  API_BASE: string;
+  onEdit: (projectId: string) => void;
+  onNew: () => void;
+}
+
+const ProjectHistoryStep: React.FC<ProjectHistoryStepProps> = ({ API_BASE, onEdit, onNew }) => {
+  const [history, setHistory] = useState<ProjectHistoryItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchHistory();
@@ -21,13 +35,13 @@ const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
         throw new Error(data.error || 'Failed to fetch history');
       }
     } catch (err) {
-      setError(err.message);
+      setError((err as Error).message);
     } finally {
       setLoading(false);
     }
   };
 
-  const formatDate = (isoString) => {
+  const formatDate = (isoString?: string) => {
     if (!isoString) return 'Unknown';
     const date = new Date(isoString);
     return date.toLocaleDateString(undefined, { 
@@ -39,7 +53,7 @@ const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
     });
   };
 
-  const handleDelete = async (projectId) => {
+  const handleDelete = async (projectId: string) => {
     if (!window.confirm('Are you sure you want to delete this project? This will also remove the video file from the server.')) {
       return;
     }
@@ -58,7 +72,7 @@ const ProjectHistoryStep = ({ API_BASE, onEdit, onNew }) => {
       }
     } catch (err) {
       console.error('Delete error:', err);
-      alert(`Error deleting project: ${err.message}`);
+      alert(`Error deleting project: ${(err as Error).message}`);
     }
   };
 

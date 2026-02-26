@@ -1,12 +1,13 @@
 import React,{useState} from 'react';
-import { Pencil, Eye } from 'lucide-react';
-import { ScenesPreview, ApiResponse, AlertType ,Settings2} from '../types';
+import { Pencil, Eye, Settings2 } from 'lucide-react';
+import { ScenesPreview, ApiResponse, AlertType } from '../types';
 
 interface WriteScriptStepProps {
   script: string;
   setScript: (script: string) => void;
   language: string;
   scenesCount: number;
+  scenesPreview: ScenesPreview | null;
   setScenesPreview: (preview: ScenesPreview) => void;
   setShowPreviewModal: (show: boolean) => void;
   prevStep: () => void;
@@ -60,10 +61,6 @@ const WriteScriptStep: React.FC<WriteScriptStepProps> = ({
     if (scenesPreview && script === lastScript) {
       setShowPreviewModal(true);
       return;
-    }
-
-    // If script hasn't changed and we already have a preview, just open it
-
     }
 
     try {

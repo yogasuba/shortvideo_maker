@@ -3,12 +3,14 @@ import { Info, ArrowRight, Clock, Image as ImageIcon, Pencil, Check, Trash2, X, 
 import { ScenesPreview, SceneData, AlertType } from '../types';
 
 interface ScenePreviewModalProps {
-  data: ScenesPreview & { total_scenes?: number };
+  data: ScenesPreview;
   setScenesPreview: (preview: ScenesPreview) => void;
   onClose: () => void;
   onProceed: () => void;
   API_BASE: string;
   addAlert: (message: string, type: AlertType) => void;
+  language: string;
+  selectedVoice: string;
 }
 
 interface UploadResponse {
@@ -16,14 +18,23 @@ interface UploadResponse {
   path: string;
 }
 
-const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPreview, onClose, onProceed, API_BASE, addAlert, language, selectedVoice }) => {
+const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ 
+  data, 
+  setScenesPreview, 
+  onClose, 
+  onProceed, 
+  API_BASE, 
+  addAlert, 
+  language, 
+  selectedVoice 
+}) => {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editVisualText, setEditVisualText] = useState<string>('');
   const [editVoiceText, setEditVoiceText] = useState<string>('');
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null);
-  const [uploadingAudioIndex, setUploadingAudioIndex] = useState(null);
-  const [isGeneratingVoice, setIsGeneratingVoice] = useState(null);
-  const [activeLineIndices, setActiveLineIndices] = useState({});
+  const [uploadingAudioIndex, setUploadingAudioIndex] = useState<number | null>(null);
+  const [isGeneratingVoice, setIsGeneratingVoice] = useState<number | null>(null);
+  const [activeLineIndices, setActiveLineIndices] = useState<Record<number, number | null>>({});
 
   // Load persistent audio defaults on mount
   React.useEffect(() => {
@@ -79,7 +90,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
     setEditVoiceText(scene.voiceover || scene.description);
   };
 
-  const getCurrentVal = (index, field) => {
+  const getCurrentVal = (index: number, field: keyof SceneData) => {
     const activeLineIndex = activeLineIndices[index];
     const scene = data.scenes[index];
     if (activeLineIndex !== undefined && activeLineIndex !== null && scene.line_styles?.[activeLineIndex]) {
@@ -88,10 +99,11 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
         return scene.line_styles[activeLineIndex][field];
       }
     }
+    // @ts-ignore - field might not exist on scene directly but we're handling optional fields
     return scene[field];
   };
 
-  const saveEdit = (index) => {
+  const saveEdit = (index: number) => {
     if (!editVisualText.trim()) return;
     
     const newScenes = [...data.scenes];
@@ -111,12 +123,9 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
     newScenes[index] = {
       ...currentScene,
       description: editVisualText, 
-      // @ts-ignore - keeping original structure for backend compatibility if it expects 'text'
       text: editVisualText,
-      // @ts-ignore
       visual_prompt: editVisualText,
       voiceover: editVoiceText,
-      // @ts-ignore
       voice_over: editVoiceText,
       duration: newDuration,
       duration_is_auto: currentScene.duration_is_auto !== false
@@ -191,7 +200,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
     }
   };
 
-  const uploadSceneAudio = async (index, file) => {
+  const uploadSceneAudio = async (index: number, file: File) => {
     if (!file) return;
     
     setUploadingAudioIndex(index);
@@ -227,7 +236,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
      }
    };
  
-  const pinAsDefault = async (index) => {
+  const pinAsDefault = async (index: number) => {
     const scene = data.scenes[index];
     if (!scene.custom_audio_url || !scene.custom_audio_path) {
       addAlert("Generate or upload audio first before pinning", "warning");
@@ -265,11 +274,11 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
       }
     } catch (error) {
       console.error('Pin error:', error);
-      addAlert(`Error: ${error.message}`, 'error');
+      addAlert(`Error: ${(error as Error).message}`, 'error');
     }
   };
 
-  const generateAIVoice = async (index) => {
+  const generateAIVoice = async (index: number) => {
     const scene = data.scenes[index];
     const text = scene.voice_over || scene.text;
     
@@ -309,13 +318,13 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
       }
     } catch (error) {
       console.error('Audio generation error:', error);
-      addAlert(`Generation failed: ${error.message}`, 'error');
+      addAlert(`Generation failed: ${(error as Error).message}`, 'error');
     } finally {
       setIsGeneratingVoice(null);
     }
   };
 
-  const removeSceneAudio = (index) => {
+  const removeSceneAudio = (index: number) => {
     const newScenes = [...data.scenes];
     const scene = { ...newScenes[index] };
     delete scene.custom_audio_url;
@@ -325,8 +334,10 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
     
     // Recalculate duration
     const textToAnalyze = scene.voice_over || scene.text;
-    const wordCount = textToAnalyze.trim().split(/\s+/).length;
-    scene.duration = Math.max(3, Math.min(Math.ceil(wordCount / 2.5), 12));
+    if (textToAnalyze) {
+      const wordCount = textToAnalyze.trim().split(/\s+/).length;
+      scene.duration = Math.max(3, Math.min(Math.ceil(wordCount / 2.5), 12));
+    }
     scene.duration_is_auto = true;
     
     newScenes[index] = scene;
@@ -335,20 +346,18 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
 
   const removeSceneImage = (index: number) => {
     const newScenes = [...data.scenes];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (newScenes[index] as any).custom_image_url;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (newScenes[index] as any).custom_image_path;
+    delete newScenes[index].custom_image_url;
+    delete newScenes[index].custom_image_path;
     setScenesPreview({ ...data, scenes: newScenes });
   };
 
-  const updateSceneConfig = (index, updates) => {
+  const updateSceneConfig = (index: number, updates: Partial<SceneData>) => {
     const newScenes = [...data.scenes];
     const activeLineIndex = activeLineIndices[index];
 
     if (activeLineIndex !== undefined && activeLineIndex !== null) {
       const scene = { ...newScenes[index] };
-      const lines = scene.text.split('\n');
+      const lines = (scene.text || '').split('\n');
       const lineStyles = [...(scene.line_styles || [])];
       
       // Ensure the lineStyles array is the correct length
@@ -365,7 +374,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
     setScenesPreview({ ...data, scenes: newScenes });
   };
 
-  const rotateScene = (index) => {
+  const rotateScene = (index: number) => {
     const currentRotation = data.scenes[index].rotation || 0;
     const nextRotation = (currentRotation + 90) % 360;
     updateSceneConfig(index, { rotation: nextRotation });
@@ -454,7 +463,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
                         <textarea 
                           className="scene-text-edit" 
                           value={editVoiceText}
-                          onChange={(e) => setEditVoiceText(e.target.value)}
+                          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setEditVoiceText(e.target.value)}
                           rows={3}
                           disabled={scene.show_image_only}
                         />
@@ -507,7 +516,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
                                 min="20" 
                                 max="120" 
                                 value={getCurrentVal(index, 'subtitle_size') || 60}
-                                onChange={(e) => updateSceneConfig(index, { subtitle_size: parseInt(e.target.value) })}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSceneConfig(index, { subtitle_size: parseInt(e.target.value) })}
                                 className="w-20 accent-primary"
                                 disabled={scene.show_image_only}
                               />
@@ -587,7 +596,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
                               <input 
                                 type="number" 
                                 value={scene.duration}
-                                onChange={(e) => updateSceneConfig(index, { duration: parseFloat(e.target.value) || 1, duration_is_auto: false })}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSceneConfig(index, { duration: parseFloat(e.target.value) || 1, duration_is_auto: false })}
                                 className="w-12 p-0.5 text-[0.75rem] border rounded text-center font-bold"
                                 min="1"
                                 max="30"
@@ -631,13 +640,13 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
                         {!scene.custom_image_url && (
                           <div 
                             className="w-32 h-20 bg-gray-100 rounded border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 hover:bg-gray-200 transition-colors cursor-pointer overflow-hidden"
-                            onClick={() => document.getElementById(`file-${index}`).click()}
+                            onClick={() => document.getElementById(`file-${index}`)?.click()}
                           >
                             <ImageIcon className="w-6 h-6 mb-1" style={{ transform: `rotate(${scene.rotation || 0}deg)` }} />
                             <span className="text-[0.6rem] font-bold uppercase">No Image</span>
                             <button 
                               className="absolute p-1 bg-primary text-white rounded-full -bottom-1 -right-1 shadow-sm"
-                              onClick={(e) => { e.stopPropagation(); rotateScene(index); }}
+                              onClick={(e: React.MouseEvent) => { e.stopPropagation(); rotateScene(index); }}
                             >
                               <RotateCw className="w-2 h-2" />
                             </button>
@@ -652,11 +661,15 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
                                 id={`file-${index}`} 
                                 className="hidden" 
                                 accept="image/*"
-                                onChange={(e) => uploadSceneImage(index, e.target.files[0])}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    uploadSceneImage(index, e.target.files[0]);
+                                  }
+                                }}
                               />
                               <button 
                                 className="w-full px-4 py-2 text-sm border-2 border-gray-200 rounded-lg text-gray-600 font-semibold flex items-center justify-center hover:bg-gray-50 transition-colors"
-                                onClick={() => document.getElementById(`file-${index}`).click()}
+                                onClick={() => document.getElementById(`file-${index}`)?.click()}
                                 disabled={uploadingIndex === index}
                               >
                                 {uploadingIndex === index ? (
@@ -750,11 +763,15 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({ data, setScenesPr
                                     id={`audio-file-${index}`} 
                                     className="hidden" 
                                     accept="audio/*"
-                                    onChange={(e) => uploadSceneAudio(index, e.target.files[0])}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                      if (e.target.files && e.target.files[0]) {
+                                        uploadSceneAudio(index, e.target.files[0]);
+                                      }
+                                    }}
                                   />
                                   <button 
                                     className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-white border border-blue-200 rounded text-blue-600 text-[0.65rem] font-bold hover:bg-blue-50 transition-colors"
-                                    onClick={() => document.getElementById(`audio-file-${index}`).click()}
+                                    onClick={() => document.getElementById(`audio-file-${index}`)?.click()}
                                     disabled={uploadingAudioIndex === index}
                                   >
                                     {uploadingAudioIndex === index ? (

@@ -25,7 +25,7 @@ import type {
   ToneType,
   UsePersistentStateReturn
 } from './types';
-import ProjectHistoryStep from './components/ProjectHistoryStep';
+import ProjectHistoryStep from './components/ProjectHistoryStep.tsx';
 
 const API_BASE = 'http://localhost:8001';
 
@@ -213,7 +213,7 @@ function App(): React.JSX.Element {
           const project = data.data;
           updateProgressState(project);
           
-          if (project.status === 'completed') {
+            if (project.status === 'completed') {
             setCurrentVideoUrl(project.video_url || '');
             setIsCompleted(true);
             setIsGenerating(false);
@@ -223,8 +223,10 @@ function App(): React.JSX.Element {
               ? project.error 
               : project.error?.message || 'Unknown error';
             addAlert(`Video creation failed: ${errorMessage}`, 'error');
-            clearInterval(interval);
-            const errorMsg = project.error?.message || project.status_message || 'Video generation failed';
+            clearInterval(intervalId);
+            const errorMsg = typeof project.error === 'object' && project.error !== null
+              ? project.error.message 
+              : project.error || project.status_message || 'Video generation failed';
             addAlert(`Error: ${errorMsg}`, 'error');
             setCurrentStep(4);
             setIsGenerating(false);
@@ -294,7 +296,7 @@ function App(): React.JSX.Element {
     setShowPreviewModal(true);
   };
 
-  const handleEditHistory = async (projectId) => {
+  const handleEditHistory = async (projectId: string) => {
     try {
       const response = await fetch(`${API_BASE}/api/projects/${projectId}`);
       const data = await response.json();
@@ -335,60 +337,7 @@ function App(): React.JSX.Element {
         throw new Error(data.error || 'Failed to load project details');
       }
     } catch (error) {
-      addAlert(`Error loading project: ${error.message}`, 'error');
-    }
-  };
-
-  const handleEdit = () => {
-    setIsCompleted(false);
-    setIsGenerating(false);
-    setProgress(0);
-    setCurrentStep(2);
-    setShowPreviewModal(true);
-  };
-
-  const handleEditHistory = async (projectId) => {
-    try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}`);
-      const data = await response.json();
-      if (data.success) {
-        const p = data.data;
-        const req = p.request_data;
-        
-        // Populate state with project data
-        setVideoTitle(p.title || '');
-        setLanguage(req.language || 'en');
-        setTone(req.tone || 'neutral');
-        setScenesCount(req.scenes_count || 8);
-        setResolution(req.resolution || '1080x1920');
-        setOrientation(req.resolution?.includes('1920x1080') ? 'landscape' : 'portrait');
-        setSubtitleStyle(req.subtitle_style || 'static');
-        setScript(req.script || '');
-        setSelectedVoice(req.voice || '');
-        setSelectedStyle(req.image_style || 'pexels');
-        
-        // If it has scenes, load them
-        if (p.scenes) {
-          setScenesPreview({
-            scenes: p.scenes,
-            total_scenes: p.scenes.length
-          });
-          setCurrentStep(2);
-          setShowPreviewModal(true);
-        } else {
-          setScenesPreview(null);
-          setCurrentStep(1);
-        }
-        
-        setIsCompleted(false);
-        setIsGenerating(false);
-        setProgress(0);
-        
-      } else {
-        throw new Error(data.error || 'Failed to load project details');
-      }
-    } catch (error) {
-      addAlert(`Error loading project: ${error.message}`, 'error');
+      addAlert(`Error loading project: ${(error as Error).message}`, 'error');
     }
   };
 
