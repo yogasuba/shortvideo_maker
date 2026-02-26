@@ -176,10 +176,17 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("app.log"),
+        logging.FileHandler("app.log", encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
+import sys
+if sys.platform == 'win32':
+    import io
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except (AttributeError, io.UnsupportedOperation):
+        pass
 # ========== CONFIGURATION ==========
 class Config:
     BASE_DIR = Path(__file__).parent
@@ -3374,3 +3381,4 @@ if __name__ == "__main__":
     print("=" * 50)
     
     uvicorn.run("main:app", host="127.0.0.1", port=port, reload=True)
+# Heartbeat to trigger reload: 2026-02-26 13:54

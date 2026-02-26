@@ -159,7 +159,8 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({
     
     setScenesPreview({ 
       ...data, 
-      scenes: newScenes
+      scenes: newScenes,
+      total_scenes: newScenes.length
     });
   };
 
@@ -305,14 +306,12 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({
         newScenes[index] = {
           ...newScenes[index],
           custom_audio_url: resData.data.url,
-          // We don't have the path from preview usually, but the backend generate_audio returns it
-          // Let's check what generate_audio returns. It's usually {url, path, cached}
           custom_audio_path: resData.data.path, 
           duration: resData.data.duration || scene.duration,
           duration_is_auto: false
         };
         setScenesPreview({ ...data, scenes: newScenes });
-        addAlert(`AI Voice generated for ${index === 0 ? 'Intro' : 'Outro'}`, 'success');
+        addAlert(`AI Voice generated for Scene ${index + 1}`, 'success');
       } else {
         throw new Error(resData.detail || 'Failed to generate voice');
       }
@@ -787,7 +786,7 @@ const ScenePreviewModal: React.FC<ScenePreviewModalProps> = ({
                             <p className="text-[0.65rem] text-blue-400 font-medium">
                               {scene.custom_audio_url 
                                 ? "✓ Voice loaded. Click Pin (stable icon) to save as server default." 
-                                : `Generate AI voice for this ${index === 0 ? 'intro' : 'outro'} once, then Pin it to save credits forever.`}
+                                : `Generate AI voice for this scene once, then Pin it to save credits forever.`}
                             </p>
                           </div>
                         </div>

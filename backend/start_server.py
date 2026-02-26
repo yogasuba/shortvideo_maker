@@ -13,19 +13,45 @@ backend_dir = Path(__file__).parent
 os.chdir(str(backend_dir))
 
 # Check if required modules are installed
-try:
-    import fastapi
-    print("✓ FastAPI is installed")
-except ImportError:
-    print("✗ FastAPI not found. Installing...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"], check=True)
+# Map import name to pip install name
+REQUIRED_PACKAGES = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "boto3": "boto3",
+    "botocore": "botocore",
+    "sqlalchemy": "sqlalchemy",
+    "gtts": "gtts",
+    "PIL": "pillow",
+    "requests": "requests",
+    "replicate": "replicate",
+    "elevenlabs": "elevenlabs",
+    "openai": "openai",
+    "dotenv": "python-dotenv"
+}
 
+def check_and_install_dependencies():
+    import importlib
+    missing = []
+    for module_name, pip_name in REQUIRED_PACKAGES.items():
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            missing.append(pip_name)
+    
+    if missing:
+        print(f"Installing missing packages: {', '.join(missing)}")
+        subprocess.run([sys.executable, "-m", "pip", "install"] + missing, check=True)
+    else:
+        print("All dependencies are satisfied.")
+
+check_and_install_dependencies()
+
+# Enable UTF-8 for console output
 try:
-    import uvicorn
-    print("✓ Uvicorn is installed")
-except ImportError:
-    print("✗ Uvicorn not found. Installing...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "uvicorn"], check=True)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 
 # Start the server
 print("\n" + "="*60)

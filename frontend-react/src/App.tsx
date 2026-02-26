@@ -25,7 +25,7 @@ import type {
   ToneType,
   UsePersistentStateReturn
 } from './types';
-import ProjectHistoryStep from './components/ProjectHistoryStep.tsx';
+import ProjectHistoryStep from './components/ProjectHistoryStep';
 
 const API_BASE = 'http://localhost:8001';
 

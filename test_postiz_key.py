@@ -12,6 +12,13 @@ if not os.path.exists(env_path):
 print(f"Loading .env from: {env_path}")
 load_dotenv(dotenv_path=env_path, override=True)
 
+import sys
+try:
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 POSTIZ_URL = os.getenv("POSTIZ_BASE_URL", "http://localhost:4007/api")
 API_KEY = os.getenv("POSTIZ_API_KEY")
 
